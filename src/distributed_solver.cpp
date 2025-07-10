@@ -27,7 +27,7 @@ void dsolver::solve( bool &do_init,
         for(auto name : solver_param_.subsystems_name)
         {   
             // init to refernce
-            data_[name].p = ref.at("p");
+            data_[name].p = ref.at("p"); // data_['back'] 或 data_['front'] 放入的是参考轨迹，下面也叫data_[problem]。。。
             data_[name].quat = ref.at("quat");
             data_[name].dp = ref.at("dp");
             data_[name].omega = ref.at("omega");
@@ -55,9 +55,9 @@ void dsolver::solve( bool &do_init,
             }
         }
         max_iterations = solver_param_.max_iteration;
-        // do_init = false;
+        // do_init = false; // 一直为true
     } 
-    else if (solver_param_.receding_horizon)
+    else if (solver_param_.receding_horizon) //由于do_init一直为true，实际这个else if没用到
     {
         // shift past prediction for receding horizon
         for(auto problem : solver_param_.subsystems_name)
@@ -149,7 +149,7 @@ void dsolver::solve( bool &do_init,
                 ref_k.push_back(ref.at("p")[k][1]);
                 ref_k.push_back(ref.at("p")[k][2]);
 
-                ref_k.push_back(0);
+                ref_k.push_back(0); // 姿态ref设置为0, 姿态四元数ref由param给出，python中计算角度差。只有三位的原因是cost_fun基于输出，输出用的欧拉角。
                 ref_k.push_back(0);
                 ref_k.push_back(0);
 
@@ -236,7 +236,7 @@ void dsolver::solve( bool &do_init,
                     //     ref_k.push_back(-data_["front"].omega[k][1] - data_[problem].dual[k][4]);
                     //     ref_k.push_back(-data_["front"].omega[k][2] - data_[problem].dual[k][5]);
                     // }
-                    ref_k.push_back(data_["wb"].dp[k][0] - data_[problem].dual[k][0]);
+                    ref_k.push_back(data_["wb"].dp[k][0] - data_[problem].dual[k][0]); //！！！这里给consensus的ref。consensus的ref=barw-y，python里再减去w，即r-y
                     ref_k.push_back(data_["wb"].dp[k][1] - data_[problem].dual[k][1]);
                     ref_k.push_back(data_["wb"].dp[k][2] - data_[problem].dual[k][2]);
 
@@ -247,7 +247,7 @@ void dsolver::solve( bool &do_init,
                 }
                 if(k == 0)
                 {
-                    for(int idx{0};idx < solver_param_.n_ineq_0;idx++)
+                    for(int idx{0};idx < solver_param_.n_ineq_0;idx++) //？？？不等式约束为啥放在了ref里
                     {
                         ref_k.push_back(0);
                     }
@@ -280,11 +280,11 @@ void dsolver::solve( bool &do_init,
                 // set q dq 
                 for (auto idx : solver_param_.subsystems_map_joint["wb"])
                 {
-                    param_k.push_back(data_["wb"].q[k][idx]);
+                    param_k.push_back(data_["wb"].q[k][idx]); //python里叫q_aux
                 }
                 for (auto idx : solver_param_.subsystems_map_joint["wb"])
                 {
-                    param_k.push_back(data_["wb"].dq[k][idx]);
+                    param_k.push_back(data_["wb"].dq[k][idx]); //python里叫dq_aux
                 }
                 // set quat_ref
                 param_k.push_back(ref.at("quat")[k][0]);
@@ -298,7 +298,7 @@ void dsolver::solve( bool &do_init,
                 // set grf
                 for(auto idx : solver_param_.subsystems_map_contact["wb"])
                 {
-                    param_k.push_back(data_["wb"].grf[k][3*idx]);
+                    param_k.push_back(data_["wb"].grf[k][3*idx]);   //python里叫grf_old，应该是反馈的地面作用力
                     param_k.push_back(data_["wb"].grf[k][3*idx+1]);
                     param_k.push_back(data_["wb"].grf[k][3*idx+2]);
                 }
@@ -364,7 +364,7 @@ void dsolver::solve( bool &do_init,
                         }
                         else
                         {
-                            weight_k[12 + count + (12+count)*nw] = weight_vec.at("foot_swing")[0];
+                            weight_k[12 + count + (12+count)*nw] = weight_vec.at("foot_swing")[0]; //分配摆动腿或站立腿权重
                             weight_k[13 + count + (13+count)*nw] = weight_vec.at("foot_swing")[1];
                             weight_k[14 + count + (14+count)*nw] = weight_vec.at("foot_swing")[2];
                         }
@@ -481,7 +481,7 @@ void dsolver::solve( bool &do_init,
                 counter = 0;
                 for(auto idx : solver_param_.subsystems_map_joint[problem])
                 {
-                    data_["wb"].q[k][idx] = x[k][7+counter];    
+                    data_["wb"].q[k][idx] = x[k][7+counter];  // data_["wb"]放的是当前及预测状态，但是没放全   
                     counter++;
                 }
                 
@@ -536,13 +536,13 @@ void dsolver::solve( bool &do_init,
             data_["wb"].omega[k][1] = 0;
             data_["wb"].omega[k][2] = 0;
 
-            double n{solver_param_.subsystems_name.size()-1};
+            double n{solver_param_.subsystems_name.size()-1}; //n=2
 
             for(auto problem : solver_param_.subsystems_name)
             {
                 if (problem == "wb")
                     continue;
-                data_["wb"].dp[k][0] += (data_[problem].dp[k][0] + data_[problem].dual[k][0]/weight_vec.at("consensus")[0])/n;
+                data_["wb"].dp[k][0] += (data_[problem].dp[k][0] + data_[problem].dual[k][0]/weight_vec.at("consensus")[0])/n; // barw_{k+1} = barw_k + (w_k + y_k/rho)/2 来源依据？？？
                 data_["wb"].dp[k][1] += (data_[problem].dp[k][1] + data_[problem].dual[k][1]/weight_vec.at("consensus")[0])/n;
                 data_["wb"].dp[k][2] += (data_[problem].dp[k][2] + data_[problem].dual[k][2]/weight_vec.at("consensus")[0])/n;
 
@@ -560,14 +560,14 @@ void dsolver::solve( bool &do_init,
             }
             for (int k{0};k<solver_param_.N_;k++)
             {
-                data_[problem].dual[k][0] += (data_[problem].dp[k][0] - data_["wb"].dp[k][0])*weight_vec.at("consensus")[0];
+                data_[problem].dual[k][0] += (data_[problem].dp[k][0] - data_["wb"].dp[k][0])*weight_vec.at("consensus")[0]; // y_{k+1} = y_k + (w_k - barw_{k+1})*rho 和公式(3)一致
                 data_[problem].dual[k][1] += (data_[problem].dp[k][1] - data_["wb"].dp[k][1])*weight_vec.at("consensus")[0];
                 data_[problem].dual[k][2] += (data_[problem].dp[k][2] - data_["wb"].dp[k][2])*weight_vec.at("consensus")[0];
                 data_[problem].dual[k][3] += (data_[problem].omega[k][0] - data_["wb"].omega[k][0])*weight_vec.at("consensus")[0];
                 data_[problem].dual[k][4] += (data_[problem].omega[k][1] - data_["wb"].omega[k][1])*weight_vec.at("consensus")[0];
                 data_[problem].dual[k][5] += (data_[problem].omega[k][2] - data_["wb"].omega[k][2])*weight_vec.at("consensus")[0];
 
-                data_[problem].residual[k][0] = (data_[problem].dp[k][0] - data_["wb"].dp[k][0]);
+                data_[problem].residual[k][0] = (data_[problem].dp[k][0] - data_["wb"].dp[k][0]); // 残差r=w-barw  是不是写反了？？？
                 data_[problem].residual[k][1] = (data_[problem].dp[k][1] - data_["wb"].dp[k][1]);
                 data_[problem].residual[k][2] = (data_[problem].dp[k][2] - data_["wb"].dp[k][2]);
                 data_[problem].residual[k][3] = (data_[problem].omega[k][0] - data_["wb"].omega[k][0]);

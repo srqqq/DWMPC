@@ -48,13 +48,13 @@ class ocp_formulation:
         ocp = AcadosOcp()
         ocp.model.name = model_name
 
-        n_joints = len(self.joints_name_list_) # n_joints=6
-        n_contact = len(self.contact_frame_name_list_) # n_contact=2
+        n_joints = len(self.joints_name_list_)
+        n_contact = len(self.contact_frame_name_list_)
 
-        n_joints_wb = len(self.joints_name_list_wb_) # n_joints_wb=12
-        n_contact_wb = len(self.contact_frame_name_list_wb_) # n_contact_wb=4
+        n_joints_wb = len(self.joints_name_list_wb_)
+        n_contact_wb = len(self.contact_frame_name_list_wb_)
 
-        s_idx =  self.s_idx_ # front=0, back=2
+        s_idx =  self.s_idx_
 
         # Define the optimization variables depending on the dynamic model
 
@@ -71,7 +71,7 @@ class ocp_formulation:
         tau = cs.SX.sym("joint_torque",n_joints,1) #joint torque
 
         grf = cs.SX.sym("ground_reaction_forces",3*n_contact,1) #Ground Reaction Forces
-        grf_aux = cs.SX.sym("ground_reaction_forces_aux",3*n_contact,1) #Ground Reaction Forces (same dimension of the ) # ？？？c代码里没有, python代码里也没有
+        grf_aux = cs.SX.sym("ground_reaction_forces_aux",3*n_contact,1) #Ground Reaction Forces (same dimension of the )
         grf_old = cs.SX.sym("grf_old",12,1)
 
         foot_ref = cs.SX.sym("foot_position_reference",3*(n_contact),1) #position of the leg
@@ -94,7 +94,7 @@ class ocp_formulation:
         # nu =  n_joints + 3*n_contact
         self.nu_ = nu
 
-        parameter = cs.vertcat(contact_state,foot_ref,q_aux,dq_aux,quat_ref,dt,grf_old)  #q_aux、dq_aux就是当前所有关节角度、角速度
+        parameter = cs.vertcat(contact_state,foot_ref,q_aux,dq_aux,quat_ref,dt,grf_old)
 
         ocp.model.x = state
         ocp.model.u = control
@@ -105,7 +105,7 @@ class ocp_formulation:
                                          n_joints_wb+
                                          4 +
                                          1 +
-                                         12,1)) # 4+3*2+12+12+4+1+12=51
+                                         12,1))
 
                                             ##========  DYNAMICS ======== ##
 
@@ -115,9 +115,9 @@ class ocp_formulation:
         C_wb = self.kinDyn_wb_.coriolis_term_fun()
         G_wb = self.kinDyn_wb_.gravity_term_fun()
 
-        M = cs.SX.zeros(6+n_joints,6+n_joints) # 12*12
-        C = cs.SX.zeros(6+n_joints,1) # 12*1
-        G = cs.SX.zeros(6+n_joints,1) # 12*1
+        M = cs.SX.zeros(6+n_joints,6+n_joints)
+        C = cs.SX.zeros(6+n_joints,1)
+        G = cs.SX.zeros(6+n_joints,1)
 
         q_wb = cs.vertcat(q_aux[:3*s_idx],q,q_aux[n_joints+3*s_idx:]) #add the auxiliary joints to the state joints
         dq_wb = cs.vertcat(dq_aux[:3*s_idx],dq,dq_aux[n_joints+3*s_idx:]) #add the auxiliary joints speed to the state joints
@@ -159,7 +159,7 @@ class ocp_formulation:
 
         inv_M = cs.inv(M)
 
-        _v_next = cs.vertcat(dp,omega,dq) + inv_M@(- C - G + torque + ext_torque)*dt # v维度=3+3+6
+        _v_next = cs.vertcat(dp,omega,dq) + inv_M@(- C - G + torque + ext_torque)*dt
 
         ##========INTERGRATOR========
         #semi-implicit euler
@@ -352,9 +352,9 @@ class ocp_formulation:
 
         ### CONTROL INPUT REGULARIZATION COST
         weight_grond_reaction_forces = 1e-2*np.ones(3*n_contact)
-        rho = [2] # 这是列表list
+        rho = [2]
         ### CONSENSUS COST
-        weight_consensus_wrench = np.array(rho*6) # 列表[2]*6=[2 2 2 2 2 2]
+        weight_consensus_wrench = np.array(rho*6)
 
 
         Q = np.concatenate((weight_postion,weight_angle,weight_joint,weight_linear_speed,weight_angular_speed,weight_joint_vel,weight_foot_pos))
