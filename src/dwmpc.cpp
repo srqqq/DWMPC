@@ -120,34 +120,16 @@ namespace controllers
             solver_param.subsystems_map_joint[solver_param.subsystems_name[subsystem]] = config["subsystems_map_joint"][solver_param.subsystems_name[subsystem]].as<std::vector<int>>();
             solver_param.subsystems_map_contact[solver_param.subsystems_name[subsystem]] = config["subsystems_map_contact"][solver_param.subsystems_name[subsystem]].as<std::vector<int>>();
         }
-        
-        solver_param.N_legs = config["n_legs"].as<int>();
-        
+                
         solver_param.N_ =  config["N_step"].as<int>();
 
-        solver_param.n_ineq_0 = config["n_ineq_0"].as<int>();
+        solver_param.n_contact_wb = n_contact_wb_;
 
-        solver_param.n_ineq = config["n_ineq"].as<int>();
-        
-        for(auto constraint : config["constraint"]["lh0"].as<std::vector<std::string>>())
-        {   
-            for(auto value : config["constraint"][constraint].as<std::vector<double>>())
-            {
-                solver_param.lh0.push_back(value);
-            }
-        }
+        solver_param.n_contact = n_contact_wb_ / config["n_problem"].as<int>();
 
-        for(auto constraint : config["constraint"]["lh"].as<std::vector<std::string>>())
-        {   
-            for(auto value : config["constraint"][constraint].as<std::vector<double>>())
-            {
-                solver_param.lh.push_back(value);
-            }
-        }
+        solver_param.n_joint_wb = n_joint_wb_;
 
-        solver_param.nw0 = config["nw0"].as<int>();
-        solver_param.nw = config["nw"].as<int>();
-        solver_param.nwe = config["nwe"].as<int>();
+        solver_param.n_joint = n_joint_wb_ / config["n_problem"].as<int>();
 
         ocp_.init(solver_param);
 
@@ -177,7 +159,7 @@ namespace controllers
         
         weight_vec_["tau"] = config["weight_tau"].as<std::vector<double>>();
         
-        weight_vec_["grf"] = config["weight_grf"].as<std::vector<double>>();
+        // weight_vec_["grf"] = config["weight_grf"].as<std::vector<double>>();
         
         weight_vec_["foot_stance"] = config["weight_foot_stance"].as<std::vector<double>>();
         
@@ -200,6 +182,7 @@ namespace controllers
                      const Eigen::Ref<const Eigen::VectorXd> &dq_op,
                      const double &loop_dt,
                      const Eigen::Ref<const Eigen::Vector4d> &current_contact,
+                     const Eigen::Ref<const Eigen::VectorXd> &grf_op,
                      const Eigen::Ref<const Eigen::MatrixXd> &foot_op,
                      const Eigen::Ref<const Eigen::VectorXd> &desired_linear_speed,
                      const Eigen::Ref<const Eigen::VectorXd> &desired_angular_speed,
@@ -218,7 +201,7 @@ namespace controllers
         std::vector<Eigen::Vector4d> temp_arrow_quat;
         std::vector<double> arrow_length;
         std::vector<double> sphere_radius;
-        run(p,quat_,q_op,dp,omega,dq_op,loop_dt,current_contact,foot_op.transpose(),desired_linear_speed,desired_angular_speed,desired_orientation_,temp_sphere_pos,temp_sphere_color,sphere_radius,temp_arrow_pos,temp_arrow_color,temp_arrow_quat,arrow_length,des_contact,des_tau,des_q,des_dq);
+        run(p,quat_,q_op,dp,omega,dq_op,loop_dt,current_contact,grf_op,foot_op.transpose(),desired_linear_speed,desired_angular_speed,desired_orientation_,temp_sphere_pos,temp_sphere_color,sphere_radius,temp_arrow_pos,temp_arrow_color,temp_arrow_quat,arrow_length,des_contact,des_tau,des_q,des_dq);
     }
     void Dwmpc::run(const Eigen::VectorXd &p,
                     const Eigen::Quaterniond &quat,
@@ -228,6 +211,7 @@ namespace controllers
                     const Eigen::VectorXd &dq_op,
                     const double &loop_dt,
                     const Eigen::Vector4d &current_contact,
+                    const Eigen::VectorXd &grf_op,
                     const Eigen::MatrixXd &foot_op,
                     const Eigen::VectorXd &desired_linear_speed,
                     const Eigen::VectorXd &desired_angular_speed,
@@ -248,6 +232,8 @@ namespace controllers
         std::map<std::string,std::vector<double>> initial_condition;
         initial_condition["p"] = {p[0],p[1],p[2]};
         initial_condition["quat"] = {quat.x(),quat.y(),quat.z(),quat.w()};
+        Eigen::Vector3d rpy_init = quatToRPY(Eigen::Quaterniond(quat.w(), quat.x(), quat.y(), quat.z()));
+        initial_condition["rpy"] = {rpy_init(0), rpy_init(1), rpy_init(2)};
         initial_condition["dp"] = {dp[0],dp[1],dp[2]};
         initial_condition["omega"] = {omega[0],omega[1],omega[2]};
         initial_condition["contact"] = {current_contact[0],current_contact[1],current_contact[2],current_contact[3]};
@@ -280,6 +266,18 @@ namespace controllers
         Eigen::MatrixXd foot = foot_op;
         // reorder_contact(foot);
         upate_terrain_height(contact0,foot);
+
+        for(int leg=0; leg < n_contact_wb_; ++leg){
+            for(int i=0; i<3; ++i) {
+                initial_condition["foot"].push_back(foot(i, leg));
+            }
+        }
+
+        for (auto i{0}; i < n_contact_wb_*3; ++i)
+        {
+            initial_condition["grf"].push_back(grf_op[i]);
+        }
+
         // update the desired values
     
         //get the yaw from the quaternion
@@ -302,6 +300,10 @@ namespace controllers
         desired_["quat"][1] = 0;
         desired_["quat"][2] = 0;
         desired_["quat"][3] = 1;
+
+        desired_["rpy"][0] = 0;
+        desired_["rpy"][1] = 0;
+        desired_["rpy"][2] = 0;
 
         desired_["dp"][0] = cos(yaw)*desired_linear_speed[0] - sin(yaw)*desired_linear_speed[1];
         desired_["dp"][1] = cos(yaw)*desired_linear_speed[1] + sin(yaw)*desired_linear_speed[0];
@@ -469,7 +471,7 @@ namespace controllers
     }
     void Dwmpc::setDesiredAndParameter(const std::vector<double> &contact0,
                                        const Eigen::MatrixXd &foot_op,
-                                       const std::map<std::string,std::vector<double>> initial_condition,
+                                       const std::map<std::string,std::vector<double>> &initial_condition,
                                        std::map<std::string,std::vector<std::vector<double>>> &ref,
                                        std::map<std::string,std::vector<std::vector<double>>> &param)
     {   
@@ -479,6 +481,7 @@ namespace controllers
         //initialize the value vector of the data in the reference 
         std::vector<std::vector<double>> p;
         std::vector<std::vector<double>> quat;
+        std::vector<std::vector<double>> rpy;
         std::vector<std::vector<double>> q;
         std::vector<std::vector<double>> dp;
         std::vector<std::vector<double>> omega;
@@ -508,6 +511,7 @@ namespace controllers
 
         //set to the desired_ angle
         quat.push_back(desired_.at("quat"));
+        rpy.push_back(desired_.at("rpy"));
         // home position quaterion for normalization
         q.push_back(q0_);
         //set to the desired_ speed linear and angular
@@ -519,7 +523,7 @@ namespace controllers
         //set the desired_ foot position to the initial foot position
         for(int idx{0};idx<n_contact_wb_;idx++)
         {
-            foot_k.push_back(foot_op(0,idx));
+            foot_k.push_back(foot_op(0,idx)); //foot_op为仿真环境反馈的足端位置
             foot_k.push_back(foot_op(1,idx));
             foot_k.push_back(foot_op(2,idx));
             // foot_k.push_back(foot0_[0+3*idx]);
@@ -580,16 +584,16 @@ namespace controllers
                 early_contact_[idx] = true;
             }
         }
-        for(int k {0}; k < N_ + 1; k++)
+        for(int k {0}; k < N_; k++)
         {   
             //set dt
             if(k<3)
             {
-                dt[0] = 0.01;
+                dt[0] = 0.02;
             }
             else
             {
-                dt[0] = 0.03;
+                dt[0] = 0.02;
             }    
 
             dt_vec.push_back(dt);
@@ -613,6 +617,7 @@ namespace controllers
 
             // quat
             quat.push_back(desired_.at("quat"));
+            rpy.push_back(desired_.at("rpy"));
             // q
             q.push_back(q0_);
             // dp
@@ -719,7 +724,7 @@ namespace controllers
                             bezier_curves_t bc(cp.begin(), cp.end(),constraints,0,1);
 
                             Eigen::Vector3d foot_position{bc(std::min((_t-timer_.duty_factor)/(1-timer_.duty_factor),1.0))};
-                            foot_k[3*leg] = foot_position[0] + p_k[0];
+                            foot_k[3*leg] = foot_position[0] + p_k[0]; // 世界坐标系下的足端位置
                             foot_k[3*leg + 1] = foot_position[1] + p_k[1];
                             foot_k[3*leg + 2] =  foot_position[2] + p_k[2];
 
@@ -745,13 +750,13 @@ namespace controllers
                 }
                 foot.push_back(foot_k);
                 // tau
-                tau.push_back(std::vector<double>(n_joint_wb_,0));
+                tau.push_back(std::vector<double>(n_joint_wb_,0)); //ref tau给的0
                 // grf
                 for(int leg{0};leg<n_contact_wb_;leg++)
                 {
                     grf_k[3*leg] = 0;
                     grf_k[3*leg+1] = 0;
-                    grf_k[3*leg+2] = 220/std::max(1.0,n_contact)*contact[leg]; //TODO change this to a more general model 220 is the weight of aliengo
+                    grf_k[3*leg+2] = 220/std::max(1.0,n_contact)*contact[leg]; //TODO change this to a more general model 220 is the weight of aliengo //ref grf只给了z轴的重力
                 }
                 grf.push_back(grf_k);
             }
@@ -766,12 +771,13 @@ namespace controllers
         // set the reference map
         ref["p"] = p;
         ref["quat"] = quat;
+        ref["rpy"] = rpy;
         ref["q"] = q;
         ref["dp"] = dp;
         ref["omega"] = omega;
         ref["dq"] = dq;
-        ref["tau"] = tau;
-        ref["grf"] = grf;
+        ref["tau"] = tau; //ref tau给的0
+        ref["grf"] = grf; //ref grf只给了z轴的重力
         ref["foot"] = foot;
         // set the parameter map
         param["contact_seq"] = contact_seq;

@@ -15,23 +15,30 @@ set(CMAKE_CXX_FLAGS "-O3")
 
 # add_compile_options("-std=c++2a")
 
+# 添加预处理器定义
+add_definitions(-DCURVES_WITH_PINOCCHIO_SUPPORT)
+#add_definitions(-DCURVES_WITH_PINOCCHIO_260)
+
 find_package(Eigen3 3.3 REQUIRED NO_MODULE)
 find_package(pybind11 CONFIG REQUIRED)
 find_package(Python3 REQUIRED COMPONENTS Development)
-add_subdirectory(third_party/acados)
+find_package(pinocchio REQUIRED)
+# add_subdirectory(third_party/acados)
 
 # Create the library for the module
 add_library(${MODULE_LIBRARY_NAME} SHARED
 	src/${PLUGIN_NAME}.cpp
-	src/acadosInterface.cpp
+	# src/acadosInterface.cpp
 	src/timer.cpp
-	src/distributed_solver.cpp
+	# src/distributed_solver.cpp
+	src/codmpc_solver.cpp
+	src/pinocchio_model.cpp
 	# add other source files here
 )
 target_include_directories(${MODULE_LIBRARY_NAME}
 	PUBLIC
 		include
-		${CMAKE_CURRENT_SOURCE_DIR}/c_generated_code
+		# ${CMAKE_CURRENT_SOURCE_DIR}/c_generated_code
 		/opt/openrobots/include
 	# add other include directories here
 )
@@ -43,11 +50,12 @@ target_link_directories(${MODULE_LIBRARY_NAME}
 )
 target_link_libraries(${MODULE_LIBRARY_NAME}
 	PUBLIC
-	acados
-	${CMAKE_CURRENT_SOURCE_DIR}/c_generated_code/libacados_ocp_solver_front.so
-	${CMAKE_CURRENT_SOURCE_DIR}/c_generated_code/libacados_ocp_solver_back.so
+	# acados
+	# ${CMAKE_CURRENT_SOURCE_DIR}/c_generated_code/libacados_ocp_solver_front.so
+	# ${CMAKE_CURRENT_SOURCE_DIR}/c_generated_code/libacados_ocp_solver_back.so
 	yaml-cpp
 	Eigen3::Eigen
+	pinocchio::pinocchio
 	# add other linked libraries here
 )
 #Add test.cpp as an executable
@@ -77,10 +85,10 @@ install(
 	COMPONENT           ${MODULE_LIBRARY_NAME}
 )
 
-install(
-	FILES       ${CMAKE_CURRENT_SOURCE_DIR}/c_generated_code/libacados_ocp_solver_front.so
-				${CMAKE_CURRENT_SOURCE_DIR}/c_generated_code/libacados_ocp_solver_back.so
-	COMPONENT   ${MODULE_LIBRARY_NAME}
-	DESTINATION /usr/lib/dls2/controllers/${PLUGIN_NAME}
-)
+# install(
+# 	FILES       ${CMAKE_CURRENT_SOURCE_DIR}/c_generated_code/libacados_ocp_solver_front.so
+# 				${CMAKE_CURRENT_SOURCE_DIR}/c_generated_code/libacados_ocp_solver_back.so
+# 	COMPONENT   ${MODULE_LIBRARY_NAME}
+# 	DESTINATION /usr/lib/dls2/controllers/${PLUGIN_NAME}
+# )
 install(TARGETS pydwmpc DESTINATION /usr/lib/dls2/controllers/${PLUGIN_NAME})

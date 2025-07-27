@@ -7,7 +7,7 @@
 
 #include "ndcurves/bezier_curve.h"
 #include <Eigen/Dense>
-#include "controllers/dwmpc/distributed_solver.hpp"
+#include "controllers/dwmpc/codmpc_solver.hpp"
 #include <numeric>
 
 #include "controllers/dwmpc/rotation.hpp"
@@ -27,7 +27,7 @@ namespace controllers
         ~Dwmpc();
         void setDesiredAndParameter(const std::vector<double> &contact0,
                                     const Eigen::MatrixXd &foot_op,
-                                    const std::map<std::string,std::vector<double>> initial_condition,
+                                    const std::map<std::string,std::vector<double>> &initial_condition,
                                     std::map<std::string,std::vector<std::vector<double>>> &ref,
                                     std::map<std::string,std::vector<std::vector<double>>> &param);
         void run(const Eigen::VectorXd &p,
@@ -38,6 +38,7 @@ namespace controllers
                  const Eigen::VectorXd &dq_op,
                  const double &loop_dt,
                  const Eigen::Vector4d &current_contact,
+                 const Eigen::VectorXd &grf_op,
                  const Eigen::MatrixXd &foot_op,
                  const Eigen::VectorXd &desired_linear_speed,
                  const Eigen::VectorXd &desired_angular_speed,
@@ -61,6 +62,7 @@ namespace controllers
                  const Eigen::Ref<const Eigen::VectorXd> &dq_op,
                  const double &loop_dt,
                  const Eigen::Ref<const Eigen::Vector4d> &current_contact,
+                 const Eigen::Ref<const Eigen::VectorXd> &grf_op,
                  const Eigen::Ref<const Eigen::MatrixXd> &foot_op,
                  const Eigen::Ref<const Eigen::VectorXd> &desired_linear_speed,
                  const Eigen::Ref<const Eigen::VectorXd> &desired_angular_speed,
@@ -99,7 +101,7 @@ namespace controllers
         void reorder_contact(Eigen::Vector4d &contact);
         void reorder_joints(Eigen::VectorXd &joint,const bool in);
         void reorder_joints(std::vector<double> &joint,const bool in);
-        dsolver ocp_;
+        codmpcSolver ocp_;
         int N_;
 
         int n_joint_wb_;

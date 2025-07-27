@@ -1,3 +1,6 @@
+#ifndef ROTATION_HPP
+#define ROTATION_HPP
+
 #include <Eigen/Dense>
 
 inline Eigen::Matrix3d  quatToRotMat(const Eigen::Quaterniond & q) {
@@ -44,3 +47,5 @@ inline Eigen::Vector3d quatToRPY(const Eigen::Quaterniond & q){
     rpy = rotTorpy(quatToRotMat(q));
     return rpy;
 }
+
+#endif

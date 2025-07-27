@@ -20,12 +20,14 @@ PYBIND11_MODULE(pydwmpc, m) {
         .def(py::init<>())
         .def_readwrite("p", &pdata::p, "Position")
         .def_readwrite("quat", &pdata::quat, "Quaternion")
+        .def_readwrite("rpy", &pdata::rpy, "Roll Pitch Yaw")
         .def_readwrite("q", &pdata::q, "Joint angles")
         .def_readwrite("dp", &pdata::dp, "Linear velocity prediction")
         .def_readwrite("omega", &pdata::omega, "Angular velocity")
         .def_readwrite("dq", &pdata::dq, "Joint velocity")
         .def_readwrite("grf", &pdata::grf, "Ground reaction forces")
         .def_readwrite("tau", &pdata::tau, "Joint torque")
+        .def_readwrite("foot", &pdata::foot, "Foot Position")
         .def_readwrite("dual", &pdata::dual, "Dual variables")
         .def_readwrite("residual", &pdata::residual, "Residuals");
     py::class_<std::vector<double>>(m, "DoubleVector")
@@ -76,6 +78,7 @@ PYBIND11_MODULE(pydwmpc, m) {
                                                              const Eigen::Ref<const Eigen::VectorXd>&,
                                                              const double&,
                                                              const Eigen::Ref<const Eigen::Vector4d>&,
+                                                             const Eigen::Ref<const Eigen::VectorXd>&,
                                                              const Eigen::Ref<const Eigen::MatrixXd>&,
                                                              const Eigen::Ref<const Eigen::VectorXd>&,
                                                              const Eigen::Ref<const Eigen::VectorXd>&,
@@ -85,7 +88,7 @@ PYBIND11_MODULE(pydwmpc, m) {
                                                              std::vector<double>&,
                                                              std::vector<double>&)>(&controllers::Dwmpc::run),
              py::arg("p"), py::arg("quat"), py::arg("q_op"), py::arg("dp"), py::arg("omega"), py::arg("dq_op"),
-             py::arg("loop_dt"), py::arg("current_contact"), py::arg("foot_op"), py::arg("desired_linear_speed"),
+             py::arg("loop_dt"), py::arg("current_contact"), py::arg("grf_op"), py::arg("foot_op"), py::arg("desired_linear_speed"),
              py::arg("desired_angular_speed"), py::arg("desired_orientation"), py::arg("des_contact"),
              py::arg("des_tau"), py::arg("des_q"), py::arg("des_dq"))
         .def("setWeight", &Dwmpc::setWeight)
