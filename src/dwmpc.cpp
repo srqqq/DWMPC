@@ -87,6 +87,8 @@ namespace controllers
     }
     void Dwmpc::init()
     {   
+        std::cout << "DWMPC initialization begins..." << std::endl;
+
         N_ = config["N_step"].as<int>();
         
         n_joint_wb_ = config["n_joint_wb"].as<int>();
@@ -140,6 +142,8 @@ namespace controllers
         desired_["step_height"] = config["step_height"].as<std::vector<double>>();
         
         desired_["quat"] = config["quat"].as<std::vector<double>>();
+
+        desired_["rpy"] = std::vector<double>(3,0);
         
         desired_["dp"] = config["dp"].as<std::vector<double>>();
         
@@ -171,7 +175,7 @@ namespace controllers
         timer_.setParam(config["duty_factor"].as<double>(),config["step_freq"].as<double>());
         timer_.set({0,0,0,0},{true,true,true,true}); 
 
-        std::cout << "Dwmpc initialized" << std::endl;
+        std::cout << "Dwmpc initialized!!!" << std::endl;
 
     }
     void Dwmpc::run(const Eigen::Ref<const Eigen::VectorXd> &p,
@@ -182,7 +186,7 @@ namespace controllers
                      const Eigen::Ref<const Eigen::VectorXd> &dq_op,
                      const double &loop_dt,
                      const Eigen::Ref<const Eigen::Vector4d> &current_contact,
-                     const Eigen::Ref<const Eigen::VectorXd> &grf_op,
+                     const Eigen::Ref<const Eigen::MatrixXd> &grf_op,
                      const Eigen::Ref<const Eigen::MatrixXd> &foot_op,
                      const Eigen::Ref<const Eigen::VectorXd> &desired_linear_speed,
                      const Eigen::Ref<const Eigen::VectorXd> &desired_angular_speed,
@@ -201,7 +205,7 @@ namespace controllers
         std::vector<Eigen::Vector4d> temp_arrow_quat;
         std::vector<double> arrow_length;
         std::vector<double> sphere_radius;
-        run(p,quat_,q_op,dp,omega,dq_op,loop_dt,current_contact,grf_op,foot_op.transpose(),desired_linear_speed,desired_angular_speed,desired_orientation_,temp_sphere_pos,temp_sphere_color,sphere_radius,temp_arrow_pos,temp_arrow_color,temp_arrow_quat,arrow_length,des_contact,des_tau,des_q,des_dq);
+        run(p,quat_,q_op,dp,omega,dq_op,loop_dt,current_contact,grf_op.transpose(),foot_op.transpose(),desired_linear_speed,desired_angular_speed,desired_orientation_,temp_sphere_pos,temp_sphere_color,sphere_radius,temp_arrow_pos,temp_arrow_color,temp_arrow_quat,arrow_length,des_contact,des_tau,des_q,des_dq);
     }
     void Dwmpc::run(const Eigen::VectorXd &p,
                     const Eigen::Quaterniond &quat,
@@ -211,7 +215,7 @@ namespace controllers
                     const Eigen::VectorXd &dq_op,
                     const double &loop_dt,
                     const Eigen::Vector4d &current_contact,
-                    const Eigen::VectorXd &grf_op,
+                    const Eigen::MatrixXd &grf_op,
                     const Eigen::MatrixXd &foot_op,
                     const Eigen::VectorXd &desired_linear_speed,
                     const Eigen::VectorXd &desired_angular_speed,
@@ -267,16 +271,13 @@ namespace controllers
         // reorder_contact(foot);
         upate_terrain_height(contact0,foot);
 
+        Eigen::MatrixXd grf_init = grf_op;
         for(int leg=0; leg < n_contact_wb_; ++leg){
             for(int i=0; i<3; ++i) {
                 initial_condition["foot"].push_back(foot(i, leg));
+                initial_condition["grf"].push_back(grf_init(i, leg));
             }
-        }
-
-        for (auto i{0}; i < n_contact_wb_*3; ++i)
-        {
-            initial_condition["grf"].push_back(grf_op[i]);
-        }
+        }  
 
         // update the desired values
     
@@ -317,6 +318,7 @@ namespace controllers
         std::map<std::string,std::vector<std::vector<double>>> param;
 
         setDesiredAndParameter(contact0,foot,initial_condition,ref,param);
+
         if(do_sine_wave_)
         {
             sineWave(ref,param);   
@@ -429,6 +431,7 @@ namespace controllers
             arrow_quat.push_back({_quat.x(),_quat.y(),_quat.z(),_quat.w()});
            
         }
+
         // set the timer state coherently with the wall clock
         timer_.set(t,init);
         // update desired torque, joint angle and joint velocity

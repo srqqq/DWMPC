@@ -78,7 +78,7 @@ PYBIND11_MODULE(pydwmpc, m) {
                                                              const Eigen::Ref<const Eigen::VectorXd>&,
                                                              const double&,
                                                              const Eigen::Ref<const Eigen::Vector4d>&,
-                                                             const Eigen::Ref<const Eigen::VectorXd>&,
+                                                             const Eigen::Ref<const Eigen::MatrixXd>&,
                                                              const Eigen::Ref<const Eigen::MatrixXd>&,
                                                              const Eigen::Ref<const Eigen::VectorXd>&,
                                                              const Eigen::Ref<const Eigen::VectorXd>&,

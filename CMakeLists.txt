@@ -80,6 +80,12 @@ install(
 )
 
 install(
+	DIRECTORY   urdf
+	DESTINATION /usr/include/dls2/controllers/${PLUGIN_NAME}
+	COMPONENT   ${MODULE_LIBRARY_NAME}
+)
+
+install(
 	TARGETS             ${MODULE_LIBRARY_NAME}
 	LIBRARY DESTINATION /usr/lib/dls2/controllers/${PLUGIN_NAME}
 	COMPONENT           ${MODULE_LIBRARY_NAME}

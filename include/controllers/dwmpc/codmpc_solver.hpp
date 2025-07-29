@@ -36,7 +36,7 @@ class codmpcSolver {
         codmpcSolver();
         void init(const parameter &solver_param);
         void solve( bool &do_init,
-                    const std::map<std::string,std::vector<double>> &inital_condition,
+                    const std::map<std::string,std::vector<double>> &initial_condition,
                     const std::map<std::string,std::vector<std::vector<double>>> &ref,
                     const std::map<std::string,std::vector<std::vector<double>>> &param,
                     const std::map<std::string,std::vector<double>> &weight_vec);
@@ -51,7 +51,7 @@ class codmpcSolver {
         std::map<std::string, pdata> data_;
         std::vector<double> Q_;
         std::vector<double> R_;
-        std::vector<std::vector<double>> u_;
+        std::map<std::string, std::vector<std::vector<double>>> u_;
         std::map<std::string, std::vector<double>> x0_;
 };
 

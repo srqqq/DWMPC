@@ -6,6 +6,8 @@ quadrupedModel::~quadrupedModel() {}
 
 void quadrupedModel::modelInit(parameter const &model_param) {
 
+    std::cout << "quadrupedModel initialization begins..." << std::endl;
+
     // 参数传递
     subsystems_name_list_ = model_param.subsystems_name;
 
@@ -21,8 +23,10 @@ void quadrupedModel::modelInit(parameter const &model_param) {
 
     contact_frame_name_list_wb_ = {"FL_foot", "FR_foot", "RL_foot", "RR_foot"};
 
+    J_linear_.resize(n_contact_wb_);
+
     // 设置文件路径
-    std::string urdf_filename{"../urdf/go1.urdf"};
+    std::string urdf_filename{"/usr/include/dls2/controllers/dwmpc/urdf/go1.urdf"};
 
     // 加载模型
     pinocchio::urdf::buildModel(urdf_filename, pinocchio::JointModelFreeFlyer(), pin_model_);
@@ -41,6 +45,10 @@ void quadrupedModel::modelInit(parameter const &model_param) {
         Ak_[subsystems_name] = Eigen::MatrixXd::Identity(37, 37);
         Bk_[subsystems_name] = Eigen::MatrixXd::Zero(37, 6);
     }
+
+    std::cout << "quadrupedModel initialized!!!" << std::endl;
+
+    return;
 }      
 
 void quadrupedModel::modelUpdate(std::map<std::string,std::vector<double>> const &xk) {        
@@ -71,8 +79,6 @@ void quadrupedModel::modelUpdate(std::map<std::string,std::vector<double>> const
     Eigen::MatrixXd inv_jac_R = Eigen::MatrixXd::Identity(3, 3);
 
     //计算雅可比矩阵，用于计算外部力矩和填充模型参数
-    std::vector<std::string> foot_names(n_contact_wb_);
-    std::vector<size_t> foot_ids(n_contact_wb_);
     for (size_t i = 0; i < n_contact_wb_; ++i) {
         int frame_id = pin_model_.getFrameId(contact_frame_name_list_wb_[i]);
         Eigen::MatrixXd J(6, pin_model_.nv);
@@ -131,20 +137,40 @@ void quadrupedModel::updateSubsystem(std::string &subsystems_name, Eigen::Matrix
     //计算矩阵参数
     Eigen::MatrixXd inv_M = M.inverse();
     Eigen::VectorXd delta = inv_M*(-nle-ext_torque);
-    Eigen::VectorXd sub_delta = delta.segment(0, 6);
 
     //组建离散模型矩阵，只修改变化的部分
     int dt = 0.02; //dt==loop_dt 或者 dt>loop_dt
     Ak_[subsystems_name].block(0, 12, 3, 3) = Eigen::MatrixXd::Identity(3, 3)*dt;
     Ak_[subsystems_name].block(3, 15, 3, 3) = inv_jac_R*dt;
-    Ak_[subsystems_name].block(6, 18, 6, 6) = Eigen::MatrixXd::Identity(3, 3)*dt;
+    Ak_[subsystems_name].block(6, 18, 6, 6) = Eigen::MatrixXd::Identity(6, 6)*dt;
     Ak_[subsystems_name].block(12, 36, 12, 1) = delta*dt;
-    Ak_[subsystems_name].block(24, 18, 3, 3) = J_linear_[s_idx]*dt;
-    Ak_[subsystems_name].block(27, 21, 3, 3) = J_linear_[s_idx+1]*dt;
-    Ak_[subsystems_name].block(30, 36, 6, 1) = sub_delta*dt;
 
-    Bk_[subsystems_name].block(12, 0, 12, 6) = inv_M.block(0, 6, 12, 6);
-    Bk_[subsystems_name].block(30, 0, 6, 6) = inv_M.block(0, 6, 6, 6);
+    Eigen::MatrixXd J_linear_subsystem1(3,12);
+    Eigen::MatrixXd J_linear_subsystem2(3,12);
+    J_linear_subsystem1.block(0, 0, 3, 6) = J_linear_[s_idx].block(0, 0, 3, 6);
+    J_linear_subsystem1.block(0, 6, 3, 6) = J_linear_[s_idx].block(0, 6+3*s_idx, 3, 6);
+    J_linear_subsystem2.block(0, 0, 3, 6) = J_linear_[s_idx+1].block(0, 0, 3, 6);
+    J_linear_subsystem2.block(0, 6, 3, 6) = J_linear_[s_idx+1].block(0, 6+3*s_idx, 3, 6);
+
+    // if (s_idx == 0) {
+    //     J_linear_subsystem1.block(0, 0, 3, 6) = J_linear_[s_idx].block(0, 0, 3, 6);
+    //     J_linear_subsystem1.block(0, 6, 3, 6) = J_linear_[s_idx].block(0, 6, 3, 6);
+    //     J_linear_subsystem2.block(0, 0, 3, 6) = J_linear_[s_idx+1].block(0, 0, 3, 6);
+    //     J_linear_subsystem2.block(0, 6, 3, 6) = J_linear_[s_idx+1].block(0, 6, 3, 6);
+    // } else {
+    //     J_linear_subsystem1.block(0, 0, 3, 6) = J_linear_[s_idx].block(0, 0, 3, 6);
+    //     J_linear_subsystem1.block(0, 6, 3, 6) = J_linear_[s_idx].block(0, 12, 3, 6);
+    //     J_linear_subsystem2.block(0, 0, 3, 6) = J_linear_[s_idx+1].block(0, 0, 3, 6);
+    //     J_linear_subsystem2.block(0, 6, 3, 6) = J_linear_[s_idx+1].block(0, 12, 3, 6);
+    // }
+
+    Ak_[subsystems_name].block(24, 12, 3, 12) = J_linear_subsystem1*dt;
+    Ak_[subsystems_name].block(27, 12, 3, 12) = J_linear_subsystem2*dt;
+    Ak_[subsystems_name].block(30, 36, 6, 1) = delta.segment(0, 6)*dt;
+    Ak_[subsystems_name](36,36) = 1.0;
+
+    Bk_[subsystems_name].block(12, 0, 12, 6) = inv_M.block(0, 6, 12, 6)*dt;
+    Bk_[subsystems_name].block(30, 0, 6, 6) = inv_M.block(0, 6, 6, 6)*dt;
 
     return;
 }
@@ -152,18 +178,22 @@ void quadrupedModel::updateSubsystem(std::string &subsystems_name, Eigen::Matrix
 std::vector<std::vector<double>> quadrupedModel::updatePrediction(std::vector<double> const &x0,
                                                                   std::vector<std::vector<double>> const &u,
                                                                   std::string const &subsystems_name) {
+
+    std::vector<std::vector<double>> xtraj(N_, std::vector<double>(37, 0.0));
+    if (subsystems_name == "wb") {
+        return xtraj;
+    }
     Eigen::VectorXd xk = Eigen::VectorXd::Map(x0.data(), x0.size());
 
-    std::vector<std::vector<double>> xtraj;
     // xtraj.push_back(x0);                                 
     for(int i=0; i<N_; ++i) {
-
-       Eigen::VectorXd uk = Eigen::Map<const Eigen::VectorXd>(u[i].data(), u[i].size());
-       xk = Ak_[subsystems_name]*xk + Bk_[subsystems_name]*uk;
-       xk(3) = normalizeAngle(xk(3));
-       xk(4) = normalizeAngle(xk(4));
-       xk(5) = normalizeAngle(xk(5));
-       xtraj.push_back(std::vector<double>(xk.data(), xk.data() + xk.size()));
+        Eigen::VectorXd uk = Eigen::Map<const Eigen::VectorXd>(u[i].data(), u[i].size());
+        xk = Ak_[subsystems_name]*xk + Bk_[subsystems_name]*uk;
+        xk(3) = normalizeAngle(xk(3));
+        xk(4) = normalizeAngle(xk(4));
+        xk(5) = normalizeAngle(xk(5));
+        // xtraj.push_back(std::vector<double>(xk.data(), xk.data() + xk.size()));
+        xtraj[i] = std::vector<double>(xk.data(), xk.data() + xk.size());
     }
                                         
     return xtraj;
