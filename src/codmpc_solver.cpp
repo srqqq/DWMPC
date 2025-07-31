@@ -45,7 +45,7 @@ void codmpcSolver::solve( bool &do_init,
             data_[name].rpy = ref.at("rpy");
             data_[name].dp = ref.at("dp");
             data_[name].omega = ref.at("omega");
-            for (int k{0};k<solver_param_.N_;k++)
+            for (int k{0};k<solver_param_.N_+1;k++)
             {   
                 std::vector<double> q,dq,tau,grf,foot;
                 for (auto idx : solver_param_.subsystems_map_joint[name])
@@ -81,7 +81,7 @@ void codmpcSolver::solve( bool &do_init,
         // shift past prediction for receding horizon
         for(auto problem : solver_param_.subsystems_name)
         {
-            for (int k{0};k<solver_param_.N_-1;k++)
+            for (int k{0};k<solver_param_.N_;k++)
             {
                 data_[problem].p[k] = data_[problem].p[k+1];
                 data_[problem].quat[k] = data_[problem].quat[k+1];
@@ -89,23 +89,26 @@ void codmpcSolver::solve( bool &do_init,
                 data_[problem].q[k] = data_[problem].q[k+1];
                 data_[problem].dp[k] = data_[problem].dp[k+1];
                 data_[problem].omega[k] = data_[problem].omega[k+1];
-                data_[problem].dq[k] = data_[problem].dq[k+1];
-                data_[problem].tau[k] = data_[problem].tau[k+1];
+                data_[problem].dq[k] = data_[problem].dq[k+1];          
+                if (k < solver_param_.N_ - 1) {
+                    data_[problem].tau[k] = data_[problem].tau[k+1];
+                }
+    
                 data_[problem].grf[k] = data_[problem].grf[k+1];
                 data_[problem].foot[k] = data_[problem].foot[k+1];
                 data_[problem].dual[k] = data_[problem].dual[k+1];
             }
-            data_[problem].p[solver_param_.N_-1] = std::vector<double>(3,0);
-            data_[problem].quat[solver_param_.N_-1] = std::vector<double>(4,0);
-            data_[problem].rpy[solver_param_.N_-1] = std::vector<double>(3,0);
-            data_[problem].q[solver_param_.N_-1] = std::vector<double>(solver_param_.subsystems_map_joint[problem].size(),0);
-            data_[problem].dp[solver_param_.N_-1] = std::vector<double>(3,0);
-            data_[problem].omega[solver_param_.N_-1] = std::vector<double>(3,0);
-            data_[problem].dq[solver_param_.N_-1] = std::vector<double>(solver_param_.subsystems_map_joint[problem].size(),0);
+            data_[problem].p[solver_param_.N_] = std::vector<double>(3,0);
+            data_[problem].quat[solver_param_.N_] = std::vector<double>(4,0);
+            data_[problem].rpy[solver_param_.N_] = std::vector<double>(3,0);
+            data_[problem].q[solver_param_.N_] = std::vector<double>(solver_param_.subsystems_map_joint[problem].size(),0);
+            data_[problem].dp[solver_param_.N_] = std::vector<double>(3,0);
+            data_[problem].omega[solver_param_.N_] = std::vector<double>(3,0);
+            data_[problem].dq[solver_param_.N_] = std::vector<double>(solver_param_.subsystems_map_joint[problem].size(),0);
             data_[problem].tau[solver_param_.N_-1] = std::vector<double>(solver_param_.subsystems_map_joint[problem].size(),0);
-            data_[problem].grf[solver_param_.N_-1] = std::vector<double>(solver_param_.subsystems_map_contact[problem].size()*3,0);
-            data_[problem].foot[solver_param_.N_-1] = std::vector<double>(solver_param_.subsystems_map_contact[problem].size()*3,0);
-            data_[problem].dual[solver_param_.N_-1] = std::vector<double>(6,0);
+            data_[problem].grf[solver_param_.N_] = std::vector<double>(solver_param_.subsystems_map_contact[problem].size()*3,0);
+            data_[problem].foot[solver_param_.N_] = std::vector<double>(solver_param_.subsystems_map_contact[problem].size()*3,0);
+            data_[problem].dual[solver_param_.N_] = std::vector<double>(6,0);
         }
         max_iterations = 1; //执行一次又把这个置为1了...好迷的逻辑
     }
@@ -125,7 +128,6 @@ void codmpcSolver::solve( bool &do_init,
 
             // ============ INITAIAL CONDITION ============
             
-            // std::vector<double> problem_initial_condition(37, 0.0);
             std::vector<double> problem_initial_condition;
             
             problem_initial_condition.push_back(initial_condition.at("p")[0]);
@@ -183,7 +185,7 @@ void codmpcSolver::solve( bool &do_init,
             std::vector<std::vector<double>> problem_constraints;
 
             // horizon loop
-            for (auto k{0};k< solver_param_.N_; k++)
+            for (auto k{0};k<solver_param_.N_+1; k++)
             {   
                 ////  ============ REFERENCE  ============
                 std::vector<double> ref_k;
@@ -333,7 +335,7 @@ void codmpcSolver::solve( bool &do_init,
             int n_joints {solver_param_.subsystems_map_joint[problem].size()}; //6
             int counter{0};
             //update data state
-            for (int k{0};k<solver_param_.N_;k++)
+            for (int k{0};k<solver_param_.N_+1;k++)
             {   
                 //p 
                 data_[problem].p[k][0] = x[k][0];
@@ -391,17 +393,19 @@ void codmpcSolver::solve( bool &do_init,
                 // consensus: dp omega 不记录，在下面更新，放在data_["wb"]中而不是data_[problem]中
 
                 //tau
-                counter = 0;
-                for(auto idx : solver_param_.subsystems_map_joint[problem])
-                {
-                    data_["wb"].tau[k][idx] = u_[problem][k][counter];
-                    counter++;
-                }          
+                if (k < solver_param_.N_) {
+                    counter = 0;
+                    for(auto idx : solver_param_.subsystems_map_joint[problem])
+                    {
+                        data_["wb"].tau[k][idx] = u_[problem][k][counter];
+                        counter++;
+                    }
+                }       
             }
         }
 
         // update whole body speeds
-        for(int k{0};k<solver_param_.N_;k++)
+        for(int k{0};k<solver_param_.N_+1;k++)
         {
             data_["wb"].dp[k][0] = 0;
             data_["wb"].dp[k][1] = 0;

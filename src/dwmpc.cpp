@@ -587,7 +587,7 @@ namespace controllers
                 early_contact_[idx] = true;
             }
         }
-        for(int k {0}; k < N_; k++)
+        for(int k {0}; k<N_+1; k++)
         {   
             //set dt
             if(k<3)

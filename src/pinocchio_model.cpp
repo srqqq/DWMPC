@@ -179,11 +179,12 @@ std::vector<std::vector<double>> quadrupedModel::updatePrediction(std::vector<do
                                                                   std::vector<std::vector<double>> const &u,
                                                                   std::string const &subsystems_name) {
 
-    std::vector<std::vector<double>> xtraj(N_, std::vector<double>(37, 0.0));
+    std::vector<std::vector<double>> xtraj(N_+1, std::vector<double>(37, 0.0));
     if (subsystems_name == "wb") {
         return xtraj;
     }
     Eigen::VectorXd xk = Eigen::VectorXd::Map(x0.data(), x0.size());
+    xtraj[0] = x0;
 
     // xtraj.push_back(x0);                                 
     for(int i=0; i<N_; ++i) {
@@ -193,7 +194,7 @@ std::vector<std::vector<double>> quadrupedModel::updatePrediction(std::vector<do
         xk(4) = normalizeAngle(xk(4));
         xk(5) = normalizeAngle(xk(5));
         // xtraj.push_back(std::vector<double>(xk.data(), xk.data() + xk.size()));
-        xtraj[i] = std::vector<double>(xk.data(), xk.data() + xk.size());
+        xtraj[i+1] = std::vector<double>(xk.data(), xk.data() + xk.size());
     }
                                         
     return xtraj;
@@ -219,17 +220,3 @@ double normalizeAngle(double angle) {
     return angle;
 }
 
-
-// std::vector<Eigen::VectorXd> quadrupedModel::updatePrediction(Eigen::VectorXd const &x0,
-//                                                               std::vector<Eigen::VectorXd> const &u,
-//                                                               std::string const &subsystems_name) {
-//     Eigen::VectorXd xk = x0;
-//     std::vector<Eigen::VectorXd> xtraj;
-//     // xtraj.push_back(x0);                                 
-//     for(int i=0; i<N_; ++i) {
-//        xk = Ak_[subsystems_name]*xk + Bk_[subsystems_name]*u[i];
-//        xtraj.push_back(xk);
-//     }
-                                        
-//     return xtraj;
-// }
