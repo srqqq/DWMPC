@@ -2,6 +2,9 @@ n_problem : 2
 n_joint_wb : 12
 n_contact_wb : 4
 n_legs : 4
+n_state : 37   # half robot
+n_control : 6  # half robot
+
 # GO2 and GO1 parameters
 q0 : [0, 0.9, -1.8, 0, 0.9, -1.8, 0, 0.9, -1.8, 0, 0.9, -1.8]
 foot0 : [0.192, 0.142, 0.024,0.192, -0.142, 0.024, -0.195, 0.142, 0.024,-0.195, -0.142, 0.024] 

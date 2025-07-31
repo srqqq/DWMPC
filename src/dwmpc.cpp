@@ -133,6 +133,10 @@ namespace controllers
 
         solver_param.n_joint = n_joint_wb_ / config["n_problem"].as<int>();
 
+        solver_param.n_state = config["n_state"].as<int>();
+
+        solver_param.n_control = config["n_control"].as<int>();
+
         ocp_.init(solver_param);
 
         // set the desired to default values

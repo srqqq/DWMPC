@@ -13,12 +13,12 @@ void codmpcSolver::init(const parameter &solver_param)
         pdata subsystem_data{};
         data_[name] = subsystem_data; //全部初始化为空
 
-        std::vector<std::vector<double>> u0(solver_param_.N_, std::vector<double>(6, 0.0));
+        std::vector<std::vector<double>> u0(solver_param_.N_, std::vector<double>(solver_param_.n_control, 0.0));
         u_[name] = u0;
     }
 
-    Q_ = std::vector<double>(37, 0.0);
-    R_ = std::vector<double>(6,  0.0);
+    Q_ = std::vector<double>(solver_param_.n_state, 0.0);
+    R_ = std::vector<double>(solver_param_.n_control,  0.0);
 
     quadruped_model_.modelInit(solver_param);
 

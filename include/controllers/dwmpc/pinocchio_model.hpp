@@ -28,6 +28,8 @@ class parameter
     int n_joint_wb{};
     int n_joint{};
     int N_{};// lenght of the horizon  
+    int n_state{};
+    int n_control{};
 };
 
 class quadrupedModel {
@@ -49,11 +51,7 @@ class quadrupedModel {
                          std::map<std::string,std::vector<double>> const &xk);
     pinocchio::Model pin_model_;
     pinocchio::Data pin_data_;
-    int n_joint_wb_;
-    int n_joint_;
-    int n_contact_wb_;
-    int n_contact_;
-    int N_;
+    parameter model_param_;
     std::vector<std::string> subsystems_name_list_;
     std::vector<std::string> contact_frame_name_list_wb_;
     std::vector<Eigen::MatrixXd> J_linear_; //足端线速度雅可比矩阵
