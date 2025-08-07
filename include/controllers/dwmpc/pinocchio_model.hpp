@@ -42,11 +42,15 @@ class quadrupedModel {
     std::vector<std::vector<double>> updatePrediction(std::vector<double> const &x0,
                                                       std::vector<std::vector<double>> const &u,
                                                       std::string const &subsystems_name);
+    void updateGrfOld(std::vector<double> const &grf_old);
+    void createSandGrfOldNle(std::string const &subsystems_name, std::map<std::string,std::vector<double>> const &xk,
+                                        Eigen::MatrixXd &S, Eigen::VectorXd &grf_old_nle);
+
     std::map<std::string, Eigen::MatrixXd> Ak_;
     std::map<std::string, Eigen::MatrixXd> Bk_;
 
     private:
-    void updateSubsystem(std::string &subsystems_name, Eigen::MatrixXd const &M_wb, 
+    void updateSubsystem(std::string const &subsystems_name, Eigen::MatrixXd const &M_wb, 
                          Eigen::VectorXd const &nle_wb, Eigen::MatrixXd const &inv_jac_R,
                          std::map<std::string,std::vector<double>> const &xk);
     pinocchio::Model pin_model_;
@@ -55,8 +59,18 @@ class quadrupedModel {
     std::vector<std::string> subsystems_name_list_;
     std::vector<std::string> contact_frame_name_list_wb_;
     std::vector<Eigen::MatrixXd> J_linear_; //足端线速度雅可比矩阵
+    std::vector<double> grf_old_wb_;
 };
 
 double normalizeAngle(double angle);
+
+#ifdef DEBUG_MODE
+
+void debug_print(const std::vector<double>& vec);
+void debug_print(const std::vector<std::vector<double>>& mat);
+void debug_print(const Eigen::VectorXd& vec);
+void debug_print(const Eigen::MatrixXd& mat);
+
+#endif
 
 #endif

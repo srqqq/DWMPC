@@ -17,17 +17,16 @@ void quadrupedModel::modelInit(parameter const &model_param) {
 
     J_linear_.resize(model_param_.n_contact_wb);
 
+    grf_old_wb_.resize(model_param_.n_contact_wb*3);
+
     // 设置文件路径
-    std::string urdf_filename{"/usr/include/dls2/controllers/dwmpc/urdf/go1.urdf"};
+    std::string urdf_filename{"/usr/include/dls2/controllers/dwmpc/urdf/go2.urdf"};
 
     // 加载模型
     pinocchio::urdf::buildModel(urdf_filename, pinocchio::JointModelFreeFlyer(), pin_model_);
 
     // 绑定data和model
     pin_data_ = pinocchio::Data(pin_model_);
-    // pinocchio::Data data(pin_model_);
-    // pin_data_ = data;
-
 
     //组建离散模型矩阵，只修改不变的部分
     for(auto subsystems_name : subsystems_name_list_) {
@@ -75,6 +74,7 @@ void quadrupedModel::modelUpdate(std::map<std::string,std::vector<double>> const
         int frame_id = pin_model_.getFrameId(contact_frame_name_list_wb_[i]);
         Eigen::MatrixXd J(6, pin_model_.nv);
         pinocchio::getFrameJacobian(pin_model_, pin_data_, frame_id, pinocchio::LOCAL_WORLD_ALIGNED, J);
+        // pinocchio::getFrameJacobian(pin_model_, pin_data_, frame_id, pinocchio::LOCAL, J);
         J_linear_[i] = J.topRows(3);
     }
 
@@ -83,13 +83,13 @@ void quadrupedModel::modelUpdate(std::map<std::string,std::vector<double>> const
         if (subsystems_name == "wb") {
             continue;
         } 
-        updateSubsystem(subsystems_name, pin_data_.M, pin_data_.nle, inv_jac_R, xk);
+        updateSubsystem(subsystems_name, M_wb, nle_wb, inv_jac_R, xk);
     }
-
+ 
     return;
 }
 
-void quadrupedModel::updateSubsystem(std::string &subsystems_name, Eigen::MatrixXd const &M_wb, 
+void quadrupedModel::updateSubsystem(std::string const &subsystems_name, Eigen::MatrixXd const &M_wb, 
                                      Eigen::VectorXd const &nle_wb, Eigen::MatrixXd const &inv_jac_R,
                                      std::map<std::string,std::vector<double>> const &xk) {
     int s_idx = 0;
@@ -101,43 +101,51 @@ void quadrupedModel::updateSubsystem(std::string &subsystems_name, Eigen::Matrix
         return;
     }
 
+    int &n_joint = model_param_.n_joint;
+    int &n_contact = model_param_.n_contact;
+
     //适配子系统的MCG
-    Eigen::MatrixXd M(6+model_param_.n_joint, 6+model_param_.n_joint);
+    Eigen::MatrixXd M(6+n_joint, 6+n_joint);
     Eigen::VectorXd nle(6+model_param_.n_joint);
 
     M.block(0, 0, 6, 6) = M_wb.block(0, 0, 6, 6);  // floating base
-    M.block(6, 6, model_param_.n_joint, model_param_.n_joint) = M_wb.block(6+3*s_idx, 6+3*s_idx, model_param_.n_joint, model_param_.n_joint);
-    M.block(0, 6, 6, model_param_.n_joint) = M_wb.block(0, 6+3*s_idx, 6, model_param_.n_joint);
-    M.block(6, 0, model_param_.n_joint, 6) = M_wb.block(6+3*s_idx, 0, model_param_.n_joint, 6);
+    M.block(6, 6, n_joint, n_joint) = M_wb.block(6+3*s_idx, 6+3*s_idx, n_joint, n_joint);
+    M.block(0, 6, 6, n_joint) = M_wb.block(0, 6+3*s_idx, 6, n_joint);
+    M.block(6, 0, n_joint, 6) = M_wb.block(6+3*s_idx, 0, n_joint, 6);
 
     nle.segment(0, 6) = nle_wb.segment(0, 6);
-    nle.segment(6, 6) = nle_wb.segment(6+3*s_idx, model_param_.n_joint);
+    nle.segment(6, 6) = nle_wb.segment(6+3*s_idx, n_joint);
 
-    //计算外部力矩，注意是关节力矩不是足端力
-    Eigen::VectorXd ext_torque = Eigen::VectorXd::Zero(6+model_param_.n_joint);
-    Eigen::VectorXd grf = Eigen::Map<const Eigen::VectorXd>(xk.at("grf").data(), xk.at("grf").size());
-    for(int idx = 0; idx < model_param_.n_contact_wb; ++idx) {
-        if ((idx == s_idx) || (idx == (model_param_.n_contact-1)+s_idx)) {
-            Eigen::VectorXd torque_wb = xk.at("contact")[idx]*J_linear_[idx].transpose()*grf.segment(3*idx, 3);
-            ext_torque.segment(0, 6) += torque_wb.segment(0, 6);
-            ext_torque.segment(6, 6) += torque_wb.segment(6+3*s_idx, model_param_.n_joint);
-        } else {
-            ext_torque.segment(0, 6) += (xk.at("contact")[idx]*J_linear_[idx].transpose()*grf.segment(3*idx, 3)).segment(0, 6);
-        }
-    }
+    // //计算外部力矩，注意是关节力矩不是足端力
+    // Eigen::VectorXd ext_torque = Eigen::VectorXd::Zero(6+n_joint);
+    // Eigen::VectorXd grf = Eigen::Map<const Eigen::VectorXd>(xk.at("grf").data(), xk.at("grf").size());
+    // for(int idx = 0; idx < model_param_.n_contact_wb; ++idx) {
+    //     if ((idx == s_idx) || (idx == (n_contact-1)+s_idx)) {
+    //         Eigen::VectorXd torque_wb = xk.at("contact")[idx]*J_linear_[idx].transpose()*grf.segment(3*idx, 3);
+    //         ext_torque.segment(0, 6) += torque_wb.segment(0, 6);
+    //         ext_torque.segment(6, 6) += torque_wb.segment(6+3*s_idx, n_joint);
+    //     } else {
+    //         ext_torque.segment(0, 6) += (xk.at("contact")[idx]*J_linear_[idx].transpose()*grf.segment(3*idx, 3)).segment(0, 6);
+    //     }
+    // }
+
+    // 计算矩阵 S (12x18) 和向量 grf_old_nle (12x1)
+    Eigen::MatrixXd S = Eigen::MatrixXd::Zero(6 + n_joint, n_joint + 3*n_contact + 3*n_contact);
+    Eigen::VectorXd grf_old_nle = Eigen::VectorXd::Zero(6 + n_joint);
+    createSandGrfOldNle(subsystems_name, xk, S, grf_old_nle);
 
     //计算矩阵参数
     Eigen::MatrixXd inv_M = M.inverse();
-    Eigen::VectorXd delta = inv_M*(-nle-ext_torque);
+    Eigen::VectorXd delta = inv_M*(-nle+grf_old_nle);
 
     //组建离散模型矩阵，只修改变化的部分
-    int dt = 0.02; //dt==loop_dt 或者 dt>loop_dt
+    double dt = 0.02; //dt==loop_dt 或者 dt>loop_dt
     Ak_[subsystems_name].block(0, 12, 3, 3) = Eigen::MatrixXd::Identity(3, 3)*dt;
     Ak_[subsystems_name].block(3, 15, 3, 3) = inv_jac_R*dt;
     Ak_[subsystems_name].block(6, 18, 6, 6) = Eigen::MatrixXd::Identity(6, 6)*dt;
     Ak_[subsystems_name].block(12, 36, 12, 1) = delta*dt;
 
-    Eigen::MatrixXd J_linear_subsystem1(3,12);
+    Eigen::MatrixXd J_linear_subsystem1(3,12); //???存疑，需要再仔细考虑下是否可以这样计算，不行就按全身动力学计算
     Eigen::MatrixXd J_linear_subsystem2(3,12);
     J_linear_subsystem1.block(0, 0, 3, 6) = J_linear_[s_idx].block(0, 0, 3, 6);
     J_linear_subsystem1.block(0, 6, 3, 6) = J_linear_[s_idx].block(0, 6+3*s_idx, 3, 6);
@@ -161,8 +169,9 @@ void quadrupedModel::updateSubsystem(std::string &subsystems_name, Eigen::Matrix
     Ak_[subsystems_name].block(30, 36, 6, 1) = delta.segment(0, 6)*dt;
     Ak_[subsystems_name](36,36) = 1.0;
 
-    Bk_[subsystems_name].block(12, 0, 12, 6) = inv_M.block(0, 6, 12, 6)*dt;
-    Bk_[subsystems_name].block(30, 0, 6, 6) = inv_M.block(0, 6, 6, 6)*dt;
+    Eigen::MatrixXd B_temp = inv_M*S;
+    Bk_[subsystems_name].block(12, 0, 12, 18) = B_temp*dt;
+    Bk_[subsystems_name].block(30, 0, 6, 18) = B_temp.block(0, 0, 6, 18)*dt;
 
     return;
 }
@@ -192,6 +201,81 @@ std::vector<std::vector<double>> quadrupedModel::updatePrediction(std::vector<do
     return xtraj;
 }
 
+void quadrupedModel::updateGrfOld(std::vector<double> const &grf_old) {
+    
+    grf_old_wb_ = grf_old;
+
+    return;
+}
+
+
+void quadrupedModel::createSandGrfOldNle(std::string const &subsystems_name, std::map<std::string,std::vector<double>> const &xk,
+                                        Eigen::MatrixXd &S, Eigen::VectorXd &grf_old_nle) {
+    
+    int s_idx = 0;
+    if (subsystems_name == "front") {
+        s_idx = 0;
+    } else if (subsystems_name == "back") {
+        s_idx = 2;
+    } else {
+        return;
+    }
+    
+    int const &n_joint = model_param_.n_joint;
+    int const &n_contact_wb = model_param_.n_contact_wb;
+    int const &n_contact = model_param_.n_contact;
+    
+    Eigen::VectorXd grf_old_wb = Eigen::VectorXd::Map(grf_old_wb_.data(), grf_old_wb_.size());
+
+    // 设置 S 中与 tau 对应的部分 (后6行，前6列)
+    S.block(6, 0, n_joint, n_joint) = Eigen::MatrixXd::Identity(n_joint, n_joint);
+    
+    std::vector<double> contact_state = xk.at("contact");
+    // 根据 s_idx 处理 grf 和 grf_aux 部分
+    if (s_idx == 0) { // s_idx == 0 (前半部分)
+
+        // 前半部分: grf_wb = [grf; grf_old[6:] + grf_aux]
+        for (int idx = 0; idx < n_contact_wb; ++idx) {   
+            Eigen::MatrixXd J_T = J_linear_[idx].transpose();
+            
+            if (idx < n_contact) {  // grf 部分
+                int col_start = n_joint + 3*idx;
+                S.block(0, col_start, 6, 3) += contact_state[idx] * J_T.topLeftCorner(6, 3);
+                S.block(6, col_start, n_joint, 3) += contact_state[idx] * J_T.block(6 + 3*s_idx, 0, n_joint, 3);
+                
+            } else {  // grf_aux 部分
+                int col_start = n_joint + 3*n_contact + 3*(idx - n_contact);
+                S.block(0, col_start, 6, 3) += contact_state[idx] * J_T.topLeftCorner(6, 3);
+                S.block(6, col_start, n_joint, 3) += contact_state[idx] * J_T.block(6 + 3*s_idx, 0, n_joint, 3);
+                
+                // grf_old 部分
+                grf_old_nle.head(6) += contact_state[idx] * J_T.topLeftCorner(6, 3) * grf_old_wb.segment(3*idx, 3);
+            }
+        }
+    } else {  // s_idx == 2 (后半部分)
+
+        // 后半部分: grf_wb = [grf_old[:6] + grf_aux; grf]
+        for (int idx = 0; idx < n_contact_wb; ++idx) {
+            Eigen::MatrixXd J_T = J_linear_[idx].transpose();
+            
+            if (idx < n_contact) {  // grf_aux 部分
+                int col_start = n_joint + 3*n_contact + 3*idx;
+                S.block(0, col_start, 6, 3) += contact_state[idx] * J_T.topLeftCorner(6, 3);
+                S.block(6, col_start, n_joint, 3) += contact_state[idx] * J_T.block(6 + 3*s_idx, 0, n_joint, 3);
+                
+                // grf_old 部分
+                grf_old_nle.head(6) += contact_state[idx] * J_T.topLeftCorner(6, 3) * grf_old_wb.segment(3*idx, 3);
+            } else {  // grf 部分
+                int col_start = n_joint + 3*(idx - n_contact);
+                S.block(0, col_start, 6, 3) += contact_state[idx] * J_T.topLeftCorner(6, 3);
+                S.block(6, col_start, n_joint, 3) += contact_state[idx] * J_T.block(6 + 3*s_idx, 0, n_joint, 3);
+            }
+        }
+    }
+    
+    return;
+}
+
 // 将角度归一化到 -π 到 π 之间
 double normalizeAngle(double angle) {
     const double PI = M_PI;
@@ -212,3 +296,54 @@ double normalizeAngle(double angle) {
     return angle;
 }
 
+#ifdef DEBUG_MODE
+// 打印std::vector<double>
+void debug_print(const std::vector<double>& vec) {
+    std::cout << "[";
+    for (size_t i = 0; i < vec.size(); ++i) {
+        std::cout << vec[i];
+        if (i != vec.size() - 1) {
+            std::cout << ", ";
+        }
+    }
+    std::cout << "]" << std::endl;
+}
+
+// 打印std::vector<std::vector<double>>
+void debug_print(const std::vector<std::vector<double>>& mat) {
+    std::cout << "[" << std::endl;
+    for (size_t i = 0; i < mat.size(); ++i) {
+        std::cout << "  ";
+        debug_print(mat[i]);  // 调用vector<double>的print函数
+    }
+    std::cout << "]" << std::endl;
+}
+
+// 打印Eigen::VectorXd
+void debug_print(const Eigen::VectorXd& vec) {
+    std::cout << "[";
+    for (int i = 0; i < vec.size(); ++i) {
+        std::cout << vec[i];
+        if (i != vec.size() - 1) {
+            std::cout << ", ";
+        }
+    }
+    std::cout << "]" << std::endl;
+}
+
+// 打印Eigen::MatrixXd
+void debug_print(const Eigen::MatrixXd& mat) {
+    std::cout << "[" << std::endl;
+    for (int i = 0; i < mat.rows(); ++i) {
+        std::cout << "  [";
+        for (int j = 0; j < mat.cols(); ++j) {
+            std::cout << mat(i, j);
+            if (j != mat.cols() - 1) {
+                std::cout << ", ";
+            }
+        }
+        std::cout << "]" << std::endl;
+    }
+    std::cout << "]" << std::endl;
+}
+#endif

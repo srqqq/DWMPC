@@ -16,9 +16,9 @@ void codmpcSolver::init(const parameter &solver_param)
         std::vector<std::vector<double>> u0(solver_param_.N_, std::vector<double>(solver_param_.n_control, 0.0));
         u_[name] = u0;
     }
-
-    Q_ = std::vector<double>(solver_param_.n_state, 0.0);
-    R_ = std::vector<double>(solver_param_.n_control,  0.0);
+    
+    Q_ = Eigen::DiagonalMatrix<double, Eigen::Dynamic>(Eigen::VectorXd::Zero(solver_param_.n_state));
+    R_ = Eigen::DiagonalMatrix<double, Eigen::Dynamic>(Eigen::VectorXd::Zero(solver_param_.n_control));
 
     quadruped_model_.modelInit(solver_param);
 
@@ -92,6 +92,7 @@ void codmpcSolver::solve( bool &do_init,
                 data_[problem].dq[k] = data_[problem].dq[k+1];          
                 if (k < solver_param_.N_ - 1) {
                     data_[problem].tau[k] = data_[problem].tau[k+1];
+                    data_[problem].grf[k] = data_[problem].grf[k+1];                
                 }
     
                 data_[problem].grf[k] = data_[problem].grf[k+1];
@@ -179,15 +180,16 @@ void codmpcSolver::solve( bool &do_init,
 
             //std::cout << std::endl;
 
+            ////  ============ REFERENCE  ============
             std::vector<std::vector<double>> problem_ref;
             std::vector<std::vector<double>> problem_param;
             std::vector<std::vector<double>> problem_weight;
             std::vector<std::vector<double>> problem_constraints;
+            std::vector<std::vector<double>> problem_ref_u; //u的reference
 
             // horizon loop
             for (auto k{0};k<solver_param_.N_+1; k++)
             {   
-                ////  ============ REFERENCE  ============
                 std::vector<double> ref_k;
                 
                 //set p,quat 
@@ -241,42 +243,66 @@ void codmpcSolver::solve( bool &do_init,
 
                 problem_ref.push_back(ref_k);
 
+                ////  ============ REFERENCE  U ============
+                std::vector<double> ref_k_u;
+                // set tau
+                for(auto idx : solver_param_.subsystems_map_joint[problem])
+                {
+                    ref_k_u.push_back(ref.at("tau")[k][idx]);
+                }
+
+                // set grf and grf_aux //这里和原代码不同，我们只优化grf、grf_aux而不是grf_wb，因此只给当前子系统赋值即可
+                for(auto idx : solver_param_.subsystems_map_contact[problem])
+                {
+                    ref_k_u.push_back(ref.at("grf")[k][3*idx]);
+                    ref_k_u.push_back(ref.at("grf")[k][3*idx+1]);
+                    ref_k_u.push_back(ref.at("grf")[k][3*idx+2]);                                   
+                }
+                for(auto idx : solver_param_.subsystems_map_contact[problem])
+                {
+                    ref_k_u.push_back(0.0);
+                    ref_k_u.push_back(0.0);
+                    ref_k_u.push_back(0.0);                                   
+                }
+    
+                problem_ref_u.push_back(ref_k_u);
+
                 ////  ============ WEIGHT  ============                
                 if(do_init) //本来是每个预测step都有一个权重，这里就不改了
                 {
                     // weight p 
-                    Q_[0] = weight_vec.at("p")[0];
-                    Q_[1] = weight_vec.at("p")[1];
-                    Q_[2] = weight_vec.at("p")[2];
+                    Q_.diagonal()[0] = weight_vec.at("p")[0];
+                    Q_.diagonal()[1] = weight_vec.at("p")[1];
+                    Q_.diagonal()[2] = weight_vec.at("p")[2];
 
                     // weight quat
-                    Q_[3] = weight_vec.at("quat")[0];
-                    Q_[4] = weight_vec.at("quat")[1];
-                    Q_[5] = weight_vec.at("quat")[2];
+                    Q_.diagonal()[3] = weight_vec.at("quat")[0];
+                    Q_.diagonal()[4] = weight_vec.at("quat")[1];
+                    Q_.diagonal()[5] = weight_vec.at("quat")[2];
 
                     // weight q
                     int i = 0;
                     for(auto idx : solver_param_.subsystems_map_joint[problem]) // 实际循环6次
                     {
-                        Q_[6+i] = weight_vec.at("q")[0];
+                        Q_.diagonal()[6+i] = weight_vec.at("q")[0];
                         i++;
                     }
                 
                     // weight dp
-                    Q_[12] = weight_vec.at("dp")[0];
-                    Q_[13] = weight_vec.at("dp")[1];
-                    Q_[14] = weight_vec.at("dp")[2];
+                    Q_.diagonal()[12] = weight_vec.at("dp")[0];
+                    Q_.diagonal()[13] = weight_vec.at("dp")[1];
+                    Q_.diagonal()[14] = weight_vec.at("dp")[2];
 
                     // weight omega
-                    Q_[15] = weight_vec.at("omega")[0];
-                    Q_[16] = weight_vec.at("omega")[1];
-                    Q_[17] = weight_vec.at("omega")[2];
+                    Q_.diagonal()[15] = weight_vec.at("omega")[0];
+                    Q_.diagonal()[16] = weight_vec.at("omega")[1];
+                    Q_.diagonal()[17] = weight_vec.at("omega")[2];
 
                     // weight dq
                     i = 0;
                     for(auto idx : solver_param_.subsystems_map_joint[problem]) // 实际循环6次
                     {
-                        Q_[18+i] = weight_vec.at("dq")[0];
+                        Q_.diagonal()[18+i] = weight_vec.at("dq")[0];
                         i++;
                     }
 
@@ -286,44 +312,60 @@ void codmpcSolver::solve( bool &do_init,
                     {   
                         if (param.at("contact_seq")[k][idx] == 1)
                         {
-                            Q_[24 + i] = weight_vec.at("foot_stance")[0];
-                            Q_[25 + i] = weight_vec.at("foot_stance")[1];
-                            Q_[26 + i] = weight_vec.at("foot_stance")[2];
+                            Q_.diagonal()[24 + i] = weight_vec.at("foot_stance")[0];
+                            Q_.diagonal()[25 + i] = weight_vec.at("foot_stance")[1];
+                            Q_.diagonal()[26 + i] = weight_vec.at("foot_stance")[2];
                         }
                         else
                         {
-                            Q_[24 + i] = weight_vec.at("foot_swing")[0]; //分配摆动腿或站立腿权重
-                            Q_[25 + i] = weight_vec.at("foot_swing")[1];
-                            Q_[26 + i] = weight_vec.at("foot_swing")[2];
+                            Q_.diagonal()[24 + i] = weight_vec.at("foot_swing")[0]; //分配摆动腿或站立腿权重
+                            Q_.diagonal()[25 + i] = weight_vec.at("foot_swing")[1];
+                            Q_.diagonal()[26 + i] = weight_vec.at("foot_swing")[2];
                         }
                         i+=3;
                     }
 
                     // weight consensus 
-                    Q_[30] = weight_vec.at("consensus")[0];
-                    Q_[31] = weight_vec.at("consensus")[0];
-                    Q_[32] = weight_vec.at("consensus")[0];
-                    Q_[33] = weight_vec.at("consensus")[0];
-                    Q_[34] = weight_vec.at("consensus")[0];
-                    Q_[35] = weight_vec.at("consensus")[0];
+                    Q_.diagonal()[30] = weight_vec.at("consensus")[0];
+                    Q_.diagonal()[31] = weight_vec.at("consensus")[0];
+                    Q_.diagonal()[32] = weight_vec.at("consensus")[0];
+                    Q_.diagonal()[33] = weight_vec.at("consensus")[0];
+                    Q_.diagonal()[34] = weight_vec.at("consensus")[0];
+                    Q_.diagonal()[35] = weight_vec.at("consensus")[0];
 
                     // weight constant 1
-                    Q_[36] = 0;
+                    Q_.diagonal()[36] = 0;
 
                     // weight tau
                     i = 0;
                     for(auto idx : solver_param_.subsystems_map_joint[problem]) // 实际循环6次
                     {
-                        R_[i] = weight_vec.at("tau")[0];
+                        R_.diagonal()[i] = weight_vec.at("tau")[0];
                         i++;
+                    }
+
+                    // weight grf grf_aux
+                    i = 0;
+                    for(auto idx : solver_param_.subsystems_map_contact["wb"])
+                    {
+                        R_.diagonal()[6+i] = weight_vec.at("grf")[0];
+                        R_.diagonal()[7+i] = weight_vec.at("grf")[0];                            
+                        R_.diagonal()[8+i] = weight_vec.at("grf")[0];
+                        i+=3;
                     }
                 }              
             }
             // pass to the codmpc sovler
-            sendSolverData(problem_ref, problem_initial_condition, data_["wb"].tau[0]);  
-            receiveSolverResult();
+            // sendSolverData(problem_ref, problem_initial_condition, data_["wb"].tau[0]);  
+            // receiveSolverResult();
+#ifdef USE_QPOASES           
+            bool success = qpOASESsolve(problem_initial_condition, problem_ref, problem);
+            if (!success) {
+                std::cout << "MPC求解失败！" << std::endl;
+            }
+#endif  
         }     
-
+        quadruped_model_.updateGrfOld(data_["wb"].grf[0]);
         for (auto problem : solver_param_.subsystems_name)
         {   
 
@@ -392,18 +434,28 @@ void codmpcSolver::solve( bool &do_init,
 
                 // consensus: dp omega 不记录，在下面更新，放在data_["wb"]中而不是data_[problem]中
 
-                //tau
+                //control input
                 if (k < solver_param_.N_) {
+                    //tau
                     counter = 0;
                     for(auto idx : solver_param_.subsystems_map_joint[problem])
                     {
                         data_["wb"].tau[k][idx] = u_[problem][k][counter];
                         counter++;
                     }
+
+                    //grf
+                    counter = 0;
+                    for(auto idx : solver_param_.subsystems_map_contact[problem])
+                    {
+                        data_["wb"].grf[k][3*idx] = u_[problem][k][n_joints+3*counter];
+                        data_["wb"].grf[k][3*idx+1] = u_[problem][k][n_joints+3*counter+1];
+                        data_["wb"].grf[k][3*idx+2] = u_[problem][k][n_joints+3*counter+2];
+                        counter++;
+                    }
                 }       
             }
         }
-
         // update whole body speeds
         for(int k{0};k<solver_param_.N_+1;k++)
         {
@@ -498,3 +550,119 @@ void codmpcSolver::receiveSolverResult() {
     return;
 }
 
+#ifdef USE_QPOASES
+
+// void codmpcSolver::qpOASESinit() {
+
+        // TODO
+//     return;
+// }
+
+bool codmpcSolver::qpOASESsolve(std::vector<double> const &problem_initial_condition, 
+                                std::vector<std::vector<double>> const &problem_ref,
+                                std::string const &subsystems_name) {
+        // // 清空之前的控制序列
+        // controlSequence.clear();
+
+        int &Np = solver_param_.N_;
+        int &nx = solver_param_.n_state;
+        int &nu = solver_param_.n_control;
+        
+        // 构建优化问题
+        int nvar = Np * nu; // 决策变量数量   
+        int ncon = 0;        // 约束数量（无约束问题）
+        
+        // 创建qpOASES问题
+        qpOASES::SQProblem qp(nvar, ncon);
+        
+        // 设置求解器选项
+        qpOASES::Options options;
+        options.setToMPC();
+        options.printLevel = qpOASES::PL_NONE;
+        qp.setOptions(options);
+        
+        //设置A B Q R
+        Eigen::MatrixXd const &A = quadruped_model_.Ak_[subsystems_name];
+        Eigen::MatrixXd const &B = quadruped_model_.Bk_[subsystems_name];
+        Eigen::DiagonalMatrix<double, Eigen::Dynamic> const &Q = Q_;
+        Eigen::DiagonalMatrix<double, Eigen::Dynamic> const &R = R_;
+
+        // 构建二次规划问题矩阵
+        Eigen::MatrixXd H = Eigen::MatrixXd::Zero(nvar, nvar);
+        Eigen::VectorXd g = Eigen::VectorXd::Zero(nvar);
+
+        // 数据类型转换
+        Eigen::VectorXd x0 = Eigen::VectorXd::Map(problem_initial_condition.data(), problem_initial_condition.size());
+        // std::cout << "~~~~~ x0 : ~~~~~" << std::endl;
+        // debug_print(x0);
+
+        // 构建Hessian矩阵 H = 2*(B'QB + R)
+        for (int i = 0; i < Np; ++i) {
+            // R项
+            for (int j = 0; j < nu; ++j) {
+                H(i*nu+j, i*nu+j) += 2.0 * R.diagonal()[j];
+            }
+            
+            // 计算预测状态
+            Eigen::MatrixXd F = Eigen::MatrixXd::Identity(nx, nx);
+            for (int k = 0; k <= i; ++k) {
+                F = A * F;
+            }
+            
+            // B'QB项
+            Eigen::MatrixXd BQ = B.transpose() * Q;
+            for (int j = 0; j < nu; ++j) {
+                for (int k = 0; k < nu; ++k) {
+                    H(i*nu+j, i*nu+k) += 2.0 * BQ.row(j) * B.col(k);
+                }
+            }
+        }
+        
+        // 构建梯度向量 g
+        for (int i = 0; i < Np; ++i) {
+            // 计算预测状态
+            Eigen::VectorXd x_pred = Eigen::VectorXd::Zero(nx);
+            Eigen::MatrixXd F = Eigen::MatrixXd::Identity(nx, nx);
+            for (int k = 0; k <= i; ++k) {
+                x_pred += F * B * Eigen::VectorXd::Zero(nu);  // 初始化为0，后续迭代更新 ???
+                F = A * F;
+            }
+            x_pred += F * x0;
+            
+            // 数据类型转换
+            Eigen::VectorXd x_ref = Eigen::VectorXd::Map(problem_ref[i].data(), problem_ref[i].size());
+
+            // 计算误差
+            Eigen::VectorXd error = x_pred - x_ref;
+            
+            // 计算梯度
+            g.segment(i*nu, nu) = 2.0 * B.transpose() * Q * error;
+
+            // std::cout << "~~~~~ x_pred    x_ref    error: ~~~~~" << std::endl;
+            // debug_print(x_pred);
+            // debug_print(x_ref);
+            // debug_print(error);
+        }
+        
+        // 初始化问题
+        int nWSR = 100;
+        qpOASES::returnValue status = qp.init(H.data(), g.data(), nullptr, nullptr, nullptr, nullptr, nullptr, nWSR);
+        
+        if (status == qpOASES::SUCCESSFUL_RETURN) {
+            // 获取最优解
+            Eigen::VectorXd u_opt(nvar);
+            qp.getPrimalSolution(u_opt.data());
+            
+            // 保存控制序列
+            for (int i = 0; i < Np; ++i) {
+                Eigen::VectorXd uk = u_opt.segment(i*nu, nu);
+                u_[subsystems_name][i] = std::vector<double>(uk.data(), uk.data() + uk.size());
+            }
+            
+            return true;
+        }
+        
+        return false;
+    }
+
+#endif

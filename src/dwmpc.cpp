@@ -167,7 +167,7 @@ namespace controllers
         
         weight_vec_["tau"] = config["weight_tau"].as<std::vector<double>>();
         
-        // weight_vec_["grf"] = config["weight_grf"].as<std::vector<double>>();
+        weight_vec_["grf"] = config["weight_grf"].as<std::vector<double>>();
         
         weight_vec_["foot_stance"] = config["weight_foot_stance"].as<std::vector<double>>();
         
@@ -275,13 +275,13 @@ namespace controllers
         // reorder_contact(foot);
         upate_terrain_height(contact0,foot);
 
-        Eigen::MatrixXd grf_init = grf_op;
+        // Eigen::MatrixXd grf_init = grf_op; //不用传感器反馈值，有问题
         for(int leg=0; leg < n_contact_wb_; ++leg){
             for(int i=0; i<3; ++i) {
                 initial_condition["foot"].push_back(foot(i, leg));
-                initial_condition["grf"].push_back(grf_init(i, leg));
+                // initial_condition["grf"].push_back(grf_init(i, leg));
             }
-        }  
+        }
 
         // update the desired values
     
@@ -322,7 +322,6 @@ namespace controllers
         std::map<std::string,std::vector<std::vector<double>>> param;
 
         setDesiredAndParameter(contact0,foot,initial_condition,ref,param);
-
         if(do_sine_wave_)
         {
             sineWave(ref,param);   
@@ -435,7 +434,6 @@ namespace controllers
             arrow_quat.push_back({_quat.x(),_quat.y(),_quat.z(),_quat.w()});
            
         }
-
         // set the timer state coherently with the wall clock
         timer_.set(t,init);
         // update desired torque, joint angle and joint velocity

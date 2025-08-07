@@ -14,6 +14,10 @@
 #include <string>
 #include "controllers/dwmpc/pinocchio_model.hpp"
 
+#ifdef USE_QPOASES
+#include "qpOASES.hpp"
+#endif
+
 class pdata
 {   
     public:
@@ -45,12 +49,19 @@ class codmpcSolver {
         void prepare(); 
         void sendSolverData(std::vector<std::vector<double>> const &reference, std::vector<double> const &initial_condition, std::vector<double> const &u0_init);
         void receiveSolverResult();
+        Eigen::DiagonalMatrix<double, Eigen::Dynamic> Q_;
+        Eigen::DiagonalMatrix<double, Eigen::Dynamic> R_;
+
+#ifdef USE_QPOASES
+        bool qpOASESsolve(std::vector<double> const &problem_initial_condition, 
+                          std::vector<std::vector<double>> const &problem_ref,
+                          std::string const &subsystems_name);
+#endif
+    
     private:
         parameter solver_param_;
         quadrupedModel quadruped_model_;
         std::map<std::string, pdata> data_;
-        std::vector<double> Q_;
-        std::vector<double> R_;
         std::map<std::string, std::vector<std::vector<double>>> u_;
         std::map<std::string, std::vector<double>> x0_;
 };

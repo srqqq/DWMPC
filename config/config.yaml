@@ -3,7 +3,7 @@ n_joint_wb : 12
 n_contact_wb : 4
 n_legs : 4
 n_state : 37   # half robot
-n_control : 6  # half robot
+n_control : 18  # half robot
 
 # GO2 and GO1 parameters
 q0 : [0, 0.9, -1.8, 0, 0.9, -1.8, 0, 0.9, -1.8, 0, 0.9, -1.8]
@@ -39,7 +39,7 @@ weight_dp: [1e3,1e3,1e3]
 weight_omega: [1e2,1e2,2e2]
 weight_dq: [1e0]
 weight_tau: [1e-2]
-# weight_grf: [2e-2]
+weight_grf: [2e-2]
 weight_foot_swing: [1e4,1e4,1e5]
 weight_foot_stance: [1e4,1e4,1e5]
 weight_consensus: [2]
