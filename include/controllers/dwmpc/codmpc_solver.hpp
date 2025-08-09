@@ -53,9 +53,15 @@ class codmpcSolver {
         Eigen::DiagonalMatrix<double, Eigen::Dynamic> R_;
 
 #ifdef USE_QPOASES
+        void computeQPmatrices(std::string const &subsystems_name, 
+                      std::vector<double> const &problem_initial_condition, 
+                      std::vector<std::vector<double>> const &problem_ref,
+                      std::vector<std::vector<double>> const &problem_ref_u,
+                      Eigen::MatrixXd& H, Eigen::VectorXd& g);
         bool qpOASESsolve(std::vector<double> const &problem_initial_condition, 
-                          std::vector<std::vector<double>> const &problem_ref,
-                          std::string const &subsystems_name);
+                                std::vector<std::vector<double>> const &problem_ref,
+                                std::vector<std::vector<double>> const &problem_ref_u,
+                                std::string const &subsystems_name);
 #endif
     
     private:

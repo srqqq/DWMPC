@@ -358,8 +358,8 @@ void codmpcSolver::solve( bool &do_init,
             // pass to the codmpc sovler
             // sendSolverData(problem_ref, problem_initial_condition, data_["wb"].tau[0]);  
             // receiveSolverResult();
-#ifdef USE_QPOASES           
-            bool success = qpOASESsolve(problem_initial_condition, problem_ref, problem);
+#ifdef USE_QPOASES 
+            bool success = qpOASESsolve(problem_initial_condition, problem_ref, problem_ref_u, problem);
             if (!success) {
                 std::cout << "MPC求解失败！" << std::endl;
             }
@@ -552,117 +552,146 @@ void codmpcSolver::receiveSolverResult() {
 
 #ifdef USE_QPOASES
 
-// void codmpcSolver::qpOASESinit() {
+// 计算MPC问题转化为QP问题时的H矩阵和g向量
+// 使用Eigen::DiagonalMatrix存储Q和R，利用Eigen内部优化
+void codmpcSolver::computeQPmatrices(std::string const &subsystems_name, 
+    std::vector<double> const &problem_initial_condition, 
+    std::vector<std::vector<double>> const &problem_ref,
+    std::vector<std::vector<double>> const &problem_ref_u,
+    Eigen::MatrixXd& H, Eigen::VectorXd& g) {
+    // 参数设置
+    int const &PREDICTION_HORIZON = solver_param_.N_;
+    int const &STATE_DIM = solver_param_.n_state;
+    int const &CONTROL_DIM = solver_param_.n_control;
 
-        // TODO
-//     return;
-// }
+    Eigen::MatrixXd const &A_d = quadruped_model_.Ak_[subsystems_name];
+    Eigen::MatrixXd const &B_d = quadruped_model_.Bk_[subsystems_name];
+    Eigen::DiagonalMatrix<double, Eigen::Dynamic> const &Q = Q_;
+    Eigen::DiagonalMatrix<double, Eigen::Dynamic> const &R = R_;
+    
+    //数据类型转换
+    Eigen::VectorXd x0 = Eigen::VectorXd::Map(problem_initial_condition.data(), problem_initial_condition.size());
+    
+    std::vector<Eigen::VectorXd> x_ref;
+    for(int i=0; i<problem_ref.size(); ++i) {
+        x_ref.push_back(Eigen::VectorXd::Map(problem_ref[i].data(), problem_ref[i].size()));
+    }
+
+    std::vector<Eigen::VectorXd> u_ref;
+    for(int i=0; i<problem_ref_u.size(); ++i) {
+        u_ref.push_back(Eigen::VectorXd::Map(problem_ref_u[i].data(), problem_ref_u[i].size()));
+    }    
+
+    // 初始化H矩阵和g向量
+    const int total_control_dim = PREDICTION_HORIZON * CONTROL_DIM;
+    H = Eigen::MatrixXd::Zero(total_control_dim, total_control_dim);
+    g = Eigen::VectorXd::Zero(total_control_dim);
+    
+    // 存储状态预测的中间结果
+    std::vector<Eigen::MatrixXd> Phi(PREDICTION_HORIZON);
+    std::vector<Eigen::MatrixXd> Gamma(PREDICTION_HORIZON);
+    
+    // 初始化Phi和Gamma
+    Phi[0] = A_d;
+    Gamma[0] = B_d;
+    
+    // 计算后续的Phi和Gamma
+    for (int i = 1; i < PREDICTION_HORIZON; ++i) {
+        Phi[i] = A_d * Phi[i-1];
+        Gamma[i] = A_d * Gamma[i-1];
+    }
+    
+    // 构建H矩阵和g向量
+    for (int k = 0; k < PREDICTION_HORIZON; ++k) {
+        const int start_idx = k * CONTROL_DIM;
+        
+        // 计算当前控制输入对应的H矩阵块
+        // 利用Eigen对DiagonalMatrix的优化处理矩阵乘法
+        Eigen::MatrixXd H_block = R.toDenseMatrix();  // R是对角矩阵
+        
+        // 添加状态成本对H矩阵的贡献
+        for (int i = k; i < PREDICTION_HORIZON; ++i) {
+            // 获取当前的Gamma矩阵
+            const Eigen::MatrixXd& Gamma_ik = (k == 0) ? Gamma[i] : Gamma[i - k];
+            
+            // Eigen会自动优化DiagonalMatrix参与的乘法运算
+            H_block += Gamma_ik.transpose() * Q * Gamma_ik;
+        }
+        
+        // 将计算好的块放入H矩阵
+        H.block(start_idx, start_idx, CONTROL_DIM, CONTROL_DIM) = H_block;
+        
+        // 计算当前控制输入对应的g向量段
+        Eigen::VectorXd g_segment = Eigen::VectorXd::Zero(CONTROL_DIM);
+        
+        // 控制成本对g向量的贡献 (R是对角矩阵)
+        g_segment -= R * u_ref[k];
+        
+        // 状态成本对g向量的贡献
+        for (int i = k; i < PREDICTION_HORIZON; ++i) {
+            const Eigen::MatrixXd& Gamma_ik = (k == 0) ? Gamma[i] : Gamma[i - k];
+            
+            // 计算状态预测
+            Eigen::VectorXd x_pred = Phi[i] * x0;
+            for (int j = 0; j < i; ++j) {
+                x_pred += Gamma[j] * u_ref[j];
+            }
+            
+            // 状态误差项 (x_pred - x_ref[i])
+            const Eigen::VectorXd state_error = x_pred - x_ref[i];
+            
+            // Eigen会自动优化DiagonalMatrix参与的乘法运算
+            g_segment += Gamma_ik.transpose() * (Q * state_error);
+        }
+        
+        // 将计算好的段放入g向量
+        g.segment(start_idx, CONTROL_DIM) = g_segment;
+    }
+}
 
 bool codmpcSolver::qpOASESsolve(std::vector<double> const &problem_initial_condition, 
                                 std::vector<std::vector<double>> const &problem_ref,
+                                std::vector<std::vector<double>> const &problem_ref_u,
                                 std::string const &subsystems_name) {
-        // // 清空之前的控制序列
-        // controlSequence.clear();
+  
+    // 参数设置
+    int const &PREDICTION_HORIZON = solver_param_.N_;
+    int const &STATE_DIM = solver_param_.n_state;
+    int const &CONTROL_DIM = solver_param_.n_control;
 
-        int &Np = solver_param_.N_;
-        int &nx = solver_param_.n_state;
-        int &nu = solver_param_.n_control;
+    // 计算H矩阵和g向量
+    Eigen::MatrixXd H;
+    Eigen::VectorXd g;
+    computeQPmatrices(subsystems_name, problem_initial_condition, problem_ref, problem_ref_u, H, g);
+    
+    // 创建qpOASES问题
+    qpOASES::SQProblem qp(PREDICTION_HORIZON*CONTROL_DIM, 0);
+    
+    // 设置求解器选项
+    qpOASES::Options options;
+    options.setToMPC();
+    options.printLevel = qpOASES::PL_NONE;
+    qp.setOptions(options);
+    
+    // 初始化问题
+    int nWSR = 1000;
+    qpOASES::returnValue status = qp.init(H.data(), g.data(), nullptr, nullptr, nullptr, nullptr, nullptr, nWSR);
+    
+    if (status == qpOASES::SUCCESSFUL_RETURN) {
+        // 获取最优解
+        Eigen::VectorXd u_opt(PREDICTION_HORIZON*CONTROL_DIM);
+        qp.getPrimalSolution(u_opt.data());
         
-        // 构建优化问题
-        int nvar = Np * nu; // 决策变量数量   
-        int ncon = 0;        // 约束数量（无约束问题）
-        
-        // 创建qpOASES问题
-        qpOASES::SQProblem qp(nvar, ncon);
-        
-        // 设置求解器选项
-        qpOASES::Options options;
-        options.setToMPC();
-        options.printLevel = qpOASES::PL_NONE;
-        qp.setOptions(options);
-        
-        //设置A B Q R
-        Eigen::MatrixXd const &A = quadruped_model_.Ak_[subsystems_name];
-        Eigen::MatrixXd const &B = quadruped_model_.Bk_[subsystems_name];
-        Eigen::DiagonalMatrix<double, Eigen::Dynamic> const &Q = Q_;
-        Eigen::DiagonalMatrix<double, Eigen::Dynamic> const &R = R_;
-
-        // 构建二次规划问题矩阵
-        Eigen::MatrixXd H = Eigen::MatrixXd::Zero(nvar, nvar);
-        Eigen::VectorXd g = Eigen::VectorXd::Zero(nvar);
-
-        // 数据类型转换
-        Eigen::VectorXd x0 = Eigen::VectorXd::Map(problem_initial_condition.data(), problem_initial_condition.size());
-        // std::cout << "~~~~~ x0 : ~~~~~" << std::endl;
-        // debug_print(x0);
-
-        // 构建Hessian矩阵 H = 2*(B'QB + R)
-        for (int i = 0; i < Np; ++i) {
-            // R项
-            for (int j = 0; j < nu; ++j) {
-                H(i*nu+j, i*nu+j) += 2.0 * R.diagonal()[j];
-            }
-            
-            // 计算预测状态
-            Eigen::MatrixXd F = Eigen::MatrixXd::Identity(nx, nx);
-            for (int k = 0; k <= i; ++k) {
-                F = A * F;
-            }
-            
-            // B'QB项
-            Eigen::MatrixXd BQ = B.transpose() * Q;
-            for (int j = 0; j < nu; ++j) {
-                for (int k = 0; k < nu; ++k) {
-                    H(i*nu+j, i*nu+k) += 2.0 * BQ.row(j) * B.col(k);
-                }
-            }
+        // 保存控制序列
+        for (int i = 0; i < PREDICTION_HORIZON; ++i) {
+            Eigen::VectorXd uk = u_opt.segment(i*CONTROL_DIM, CONTROL_DIM);
+            u_[subsystems_name][i] = std::vector<double>(uk.data(), uk.data() + uk.size());
         }
         
-        // 构建梯度向量 g
-        for (int i = 0; i < Np; ++i) {
-            // 计算预测状态
-            Eigen::VectorXd x_pred = Eigen::VectorXd::Zero(nx);
-            Eigen::MatrixXd F = Eigen::MatrixXd::Identity(nx, nx);
-            for (int k = 0; k <= i; ++k) {
-                x_pred += F * B * Eigen::VectorXd::Zero(nu);  // 初始化为0，后续迭代更新 ???
-                F = A * F;
-            }
-            x_pred += F * x0;
-            
-            // 数据类型转换
-            Eigen::VectorXd x_ref = Eigen::VectorXd::Map(problem_ref[i].data(), problem_ref[i].size());
-
-            // 计算误差
-            Eigen::VectorXd error = x_pred - x_ref;
-            
-            // 计算梯度
-            g.segment(i*nu, nu) = 2.0 * B.transpose() * Q * error;
-
-            // std::cout << "~~~~~ x_pred    x_ref    error: ~~~~~" << std::endl;
-            // debug_print(x_pred);
-            // debug_print(x_ref);
-            // debug_print(error);
-        }
-        
-        // 初始化问题
-        int nWSR = 100;
-        qpOASES::returnValue status = qp.init(H.data(), g.data(), nullptr, nullptr, nullptr, nullptr, nullptr, nWSR);
-        
-        if (status == qpOASES::SUCCESSFUL_RETURN) {
-            // 获取最优解
-            Eigen::VectorXd u_opt(nvar);
-            qp.getPrimalSolution(u_opt.data());
-            
-            // 保存控制序列
-            for (int i = 0; i < Np; ++i) {
-                Eigen::VectorXd uk = u_opt.segment(i*nu, nu);
-                u_[subsystems_name][i] = std::vector<double>(uk.data(), uk.data() + uk.size());
-            }
-            
-            return true;
-        }
-        
-        return false;
+        return true;
     }
+    
+    return false;
+}
 
 #endif
