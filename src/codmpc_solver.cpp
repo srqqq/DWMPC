@@ -13,7 +13,7 @@ void codmpcSolver::init(const parameter &solver_param)
         pdata subsystem_data{};
         data_[name] = subsystem_data; //全部初始化为空
 
-        std::vector<std::vector<double>> u0(solver_param_.N_, std::vector<double>(solver_param_.n_control, 0.0));
+        std::vector<Eigen::VectorXd> u0(solver_param_.N_, Eigen::VectorXd::Zero(solver_param_.n_control));
         u_[name] = u0;
     }
     
@@ -28,7 +28,7 @@ void codmpcSolver::init(const parameter &solver_param)
 }
 
 void codmpcSolver::solve( bool &do_init,
-                    const std::map<std::string,std::vector<double>> &initial_condition,
+                    const std::map<std::string,std::vector<double>> &x0_map,
                     const std::map<std::string,std::vector<std::vector<double>>> &ref,
                     const std::map<std::string,std::vector<std::vector<double>>> &param,
                     const std::map<std::string,std::vector<double>> &weight_vec) 
@@ -124,148 +124,166 @@ void codmpcSolver::solve( bool &do_init,
             if (problem == "wb")
                 continue;
 
+            int counter = 0;
+
             // ============       MODEL       ============
-            quadruped_model_.modelUpdate(initial_condition);
+            quadruped_model_.modelUpdate(x0_map);
 
             // ============ INITAIAL CONDITION ============
+            Eigen::VectorXd x0(solver_param_.n_state);
             
-            std::vector<double> problem_initial_condition;
-            
-            problem_initial_condition.push_back(initial_condition.at("p")[0]);
-            problem_initial_condition.push_back(initial_condition.at("p")[1]);
-            problem_initial_condition.push_back(initial_condition.at("p")[2]);
+            x0(0) = x0_map.at("p")[0];
+            x0(1) = x0_map.at("p")[1];
+            x0(2) = x0_map.at("p")[2];
 
-            problem_initial_condition.push_back(normalizeAngle(initial_condition.at("rpy")[0]));
-            problem_initial_condition.push_back(normalizeAngle(initial_condition.at("rpy")[1]));
-            problem_initial_condition.push_back(normalizeAngle(initial_condition.at("rpy")[2]));
-            // problem_initial_condition.push_back(normalizeAngle(initial_condition.at("rpy")[0] - ref.at("rpy")[0][0])); // 姿态欧拉角ref设置为0，由于欧拉角有过圈问题，在这里先算好误差
-            // problem_initial_condition.push_back(normalizeAngle(initial_condition.at("rpy")[1] - ref.at("rpy")[0][1]));
-            // problem_initial_condition.push_back(normalizeAngle(initial_condition.at("rpy")[2] - ref.at("rpy")[0][2]));
+            x0(3) = normalizeAngle(x0_map.at("rpy")[0]);
+            x0(4) = normalizeAngle(x0_map.at("rpy")[1]);
+            x0(5) = normalizeAngle(x0_map.at("rpy")[2]);
+            // problem_initial_condition.push_back(normalizeAngle(x0_map.at("rpy")[0] - ref.at("rpy")[0][0])); // 姿态欧拉角ref设置为0，由于欧拉角有过圈问题，在这里先算好误差
+            // problem_initial_condition.push_back(normalizeAngle(x0_map.at("rpy")[1] - ref.at("rpy")[0][1]));
+            // problem_initial_condition.push_back(normalizeAngle(x0_map.at("rpy")[2] - ref.at("rpy")[0][2]));
 
+            counter = 0;
             for(auto idx : solver_param_.subsystems_map_joint[problem]) //循环6次
             {
-                problem_initial_condition.push_back(initial_condition.at("q")[idx]);
+                x0(6+counter) = x0_map.at("q")[idx];
+                ++counter;
             }
 
-            problem_initial_condition.push_back(initial_condition.at("dp")[0]);
-            problem_initial_condition.push_back(initial_condition.at("dp")[1]);
-            problem_initial_condition.push_back(initial_condition.at("dp")[2]);
+            x0(12) = x0_map.at("dp")[0];
+            x0(13) = x0_map.at("dp")[1];
+            x0(14) = x0_map.at("dp")[2];
 
-            problem_initial_condition.push_back(initial_condition.at("omega")[0]);
-            problem_initial_condition.push_back(initial_condition.at("omega")[1]);
-            problem_initial_condition.push_back(initial_condition.at("omega")[2]);
+            x0(15) = x0_map.at("omega")[0];
+            x0(16) = x0_map.at("omega")[1];
+            x0(17) = x0_map.at("omega")[2];
 
+            counter=0;
             for(auto idx : solver_param_.subsystems_map_joint[problem]) //循环6次
             {
-                problem_initial_condition.push_back(initial_condition.at("dq")[idx]);
+                x0(18+counter) = x0_map.at("dq")[idx];
+                ++counter;
             }
             
-            for (auto idx : solver_param_.subsystems_map_contact[problem]) //循环2*3次
+            counter=0;
+            for (auto idx : solver_param_.subsystems_map_contact[problem]) //循环3*2次
             {
-                problem_initial_condition.push_back(initial_condition.at("foot")[3*idx]);
-                problem_initial_condition.push_back(initial_condition.at("foot")[3*idx+1]);
-                problem_initial_condition.push_back(initial_condition.at("foot")[3*idx+2]);
+                x0(24+counter) = x0_map.at("foot")[3*idx];
+                x0(25+counter) = x0_map.at("foot")[3*idx+1];
+                x0(26+counter) = x0_map.at("foot")[3*idx+2];
+                counter+=3;
             }
 
-            problem_initial_condition.push_back(data_["wb"].dp[0][0] - data_[problem].dual[0][0]); //！！！这里给consensus的ref。consensus的ref=barw-y，python里再减去w，即r-y
-            problem_initial_condition.push_back(data_["wb"].dp[0][1] - data_[problem].dual[0][1]);
-            problem_initial_condition.push_back(data_["wb"].dp[0][2] - data_[problem].dual[0][2]);
-            problem_initial_condition.push_back(data_["wb"].omega[0][0] - data_[problem].dual[0][3]);
-            problem_initial_condition.push_back(data_["wb"].omega[0][1] - data_[problem].dual[0][4]);
-            problem_initial_condition.push_back(data_["wb"].omega[0][2] - data_[problem].dual[0][5]);
+            x0(30) = data_["wb"].dp[0][0] - data_[problem].dual[0][0]; //！！！这里给consensus的ref。consensus的ref=barw-y，python里再减去w，即r-y
+            x0(31) = data_["wb"].dp[0][1] - data_[problem].dual[0][1];
+            x0(32) = data_["wb"].dp[0][2] - data_[problem].dual[0][2];
+            x0(33) = data_["wb"].omega[0][0] - data_[problem].dual[0][3];
+            x0(34) = data_["wb"].omega[0][1] - data_[problem].dual[0][4];
+            x0(35) = data_["wb"].omega[0][2] - data_[problem].dual[0][5];
 
-            problem_initial_condition.push_back(1.0);
+            x0(36) = 1.0;
 
-            x0_[problem] = problem_initial_condition;
+            x0_[problem] = x0;
 
             //std::cout << std::endl;
 
             ////  ============ REFERENCE  ============
-            std::vector<std::vector<double>> problem_ref;
-            std::vector<std::vector<double>> problem_param;
-            std::vector<std::vector<double>> problem_weight;
-            std::vector<std::vector<double>> problem_constraints;
-            std::vector<std::vector<double>> problem_ref_u; //u的reference
+            std::vector<Eigen::VectorXd> x_ref;
+            std::vector<Eigen::VectorXd> u_ref;
 
             // horizon loop
             for (auto k{0};k<solver_param_.N_+1; k++)
             {   
-                std::vector<double> ref_k;
-                
+                Eigen::VectorXd x_ref_k(solver_param_.n_state);
+    
                 //set p,quat 
-                ref_k.push_back(ref.at("p")[k][0]);
-                ref_k.push_back(ref.at("p")[k][1]);
-                ref_k.push_back(ref.at("p")[k][2]);
+                x_ref_k(0) = ref.at("p")[k][0];
+                x_ref_k(1) = ref.at("p")[k][1];
+                x_ref_k(2) = ref.at("p")[k][2];
 
-                ref_k.push_back(ref.at("rpy")[k][0]);
-                ref_k.push_back(ref.at("rpy")[k][1]);
-                ref_k.push_back(ref.at("rpy")[k][2]);
+                x_ref_k(3) = ref.at("rpy")[k][0];
+                x_ref_k(4) = ref.at("rpy")[k][1];
+                x_ref_k(5) = ref.at("rpy")[k][2];
                 // ref_k.push_back(0); // 姿态欧拉角ref设置为0，由于欧拉角有过圈问题，在这里先算好误差
                 // ref_k.push_back(0);
                 // ref_k.push_back(0);
 
                 // set q
+                counter=0;
                 for(auto idx : solver_param_.subsystems_map_joint[problem]) //循环6次
-                {   
-                    ref_k.push_back(ref.at("q")[k][idx]);
+                {
+                    x_ref_k(6+counter) = ref.at("q")[k][idx];
+                    ++counter;
                 }
 
                 // set dp omega
-                ref_k.push_back(ref.at("dp")[k][0]);
-                ref_k.push_back(ref.at("dp")[k][1]);
-                ref_k.push_back(ref.at("dp")[k][2]);
+                x_ref_k(12) = ref.at("dp")[k][0];
+                x_ref_k(13) = ref.at("dp")[k][1];
+                x_ref_k(14) = ref.at("dp")[k][2];
 
-                ref_k.push_back(ref.at("omega")[k][0]);
-                ref_k.push_back(ref.at("omega")[k][1]);
-                ref_k.push_back(ref.at("omega")[k][2]);
+                x_ref_k(15) = ref.at("omega")[k][0];
+                x_ref_k(16) = ref.at("omega")[k][1];
+                x_ref_k(17) = ref.at("omega")[k][2];
+
                 // set dq
+                counter=0;
                 for(auto idx : solver_param_.subsystems_map_joint[problem]) //循环6次
                 {
-                    ref_k.push_back(ref.at("dq")[k][idx]);
+                    x_ref_k(18+counter) = ref.at("dq")[k][idx];
+                    ++counter;
                 }
                 // set foot
+                counter=0;
                 for (auto idx : solver_param_.subsystems_map_contact[problem]) //循环2*3次
                 {
-                    ref_k.push_back(ref.at("foot")[k][3*idx]);
-                    ref_k.push_back(ref.at("foot")[k][3*idx+1]);
-                    ref_k.push_back(ref.at("foot")[k][3*idx+2]);
+                    x_ref_k(24+counter) = ref.at("foot")[k][3*idx];
+                    x_ref_k(25+counter) = ref.at("foot")[k][3*idx+1];
+                    x_ref_k(26+counter) = ref.at("foot")[k][3*idx+2];
+                    counter+=3;
                 }
                 // set consensus
-                ref_k.push_back(data_["wb"].dp[k][0] - data_[problem].dual[k][0]); //！！！这里给consensus的ref。consensus的ref=barw-y，python里再减去w，即r-y
-                ref_k.push_back(data_["wb"].dp[k][1] - data_[problem].dual[k][1]);
-                ref_k.push_back(data_["wb"].dp[k][2] - data_[problem].dual[k][2]);
+                x_ref_k(30) = data_["wb"].dp[k][0] - data_[problem].dual[k][0]; //！！！这里给consensus的ref。consensus的ref=barw-y，python里再减去w，即r-y
+                x_ref_k(31) = data_["wb"].dp[k][1] - data_[problem].dual[k][1];
+                x_ref_k(32) = data_["wb"].dp[k][2] - data_[problem].dual[k][2];
 
-                ref_k.push_back(data_["wb"].omega[k][0] - data_[problem].dual[k][3]);
-                ref_k.push_back(data_["wb"].omega[k][1] - data_[problem].dual[k][4]);
-                ref_k.push_back(data_["wb"].omega[k][2] - data_[problem].dual[k][5]);
+                x_ref_k(33) = data_["wb"].omega[k][0] - data_[problem].dual[k][3];
+                x_ref_k(34) = data_["wb"].omega[k][1] - data_[problem].dual[k][4];
+                x_ref_k(35) = data_["wb"].omega[k][2] - data_[problem].dual[k][5];
 
-                ref_k.push_back(1.0);
+                x_ref_k(36) = 1.0;
 
-                problem_ref.push_back(ref_k);
+                x_ref.push_back(x_ref_k);
 
                 ////  ============ REFERENCE  U ============
-                std::vector<double> ref_k_u;
+                Eigen::VectorXd u_ref_k(solver_param_.n_control);
                 // set tau
-                for(auto idx : solver_param_.subsystems_map_joint[problem])
+                counter=0;
+                for(auto idx : solver_param_.subsystems_map_joint[problem]) //循环6次
                 {
-                    ref_k_u.push_back(ref.at("tau")[k][idx]);
+                    u_ref_k(counter) = ref.at("tau")[k][idx];
+                    ++counter;
                 }
 
                 // set grf and grf_aux //这里和原代码不同，我们只优化grf、grf_aux而不是grf_wb，因此只给当前子系统赋值即可
-                for(auto idx : solver_param_.subsystems_map_contact[problem])
+                counter=0;
+                for(auto idx : solver_param_.subsystems_map_contact[problem]) //循环3*2=6次
                 {
-                    ref_k_u.push_back(ref.at("grf")[k][3*idx]);
-                    ref_k_u.push_back(ref.at("grf")[k][3*idx+1]);
-                    ref_k_u.push_back(ref.at("grf")[k][3*idx+2]);                                   
+                    u_ref_k(6+counter) = ref.at("grf")[k][3*idx];
+                    u_ref_k(7+counter) = ref.at("grf")[k][3*idx+1];
+                    u_ref_k(8+counter) = ref.at("grf")[k][3*idx+2];
+                    counter+=3;              
                 }
-                for(auto idx : solver_param_.subsystems_map_contact[problem])
+                counter=0;
+                for(auto idx : solver_param_.subsystems_map_contact[problem]) //循环3*2=6次
                 {
-                    ref_k_u.push_back(0.0);
-                    ref_k_u.push_back(0.0);
-                    ref_k_u.push_back(0.0);                                   
+
+                    u_ref_k(12+counter) = 0.0;
+                    u_ref_k(13+counter) = 0.0;
+                    u_ref_k(14+counter) = 0.0;
+                    counter+=3;
                 }
     
-                problem_ref_u.push_back(ref_k_u);
+                u_ref.push_back(u_ref_k);
 
                 ////  ============ WEIGHT  ============                
                 if(do_init) //本来是每个预测step都有一个权重，这里就不改了
@@ -281,11 +299,11 @@ void codmpcSolver::solve( bool &do_init,
                     Q_.diagonal()[5] = weight_vec.at("quat")[2];
 
                     // weight q
-                    int i = 0;
+                    counter = 0;
                     for(auto idx : solver_param_.subsystems_map_joint[problem]) // 实际循环6次
                     {
-                        Q_.diagonal()[6+i] = weight_vec.at("q")[0];
-                        i++;
+                        Q_.diagonal()[6+counter] = weight_vec.at("q")[0];
+                        counter++;
                     }
                 
                     // weight dp
@@ -299,30 +317,30 @@ void codmpcSolver::solve( bool &do_init,
                     Q_.diagonal()[17] = weight_vec.at("omega")[2];
 
                     // weight dq
-                    i = 0;
+                    counter = 0;
                     for(auto idx : solver_param_.subsystems_map_joint[problem]) // 实际循环6次
                     {
-                        Q_.diagonal()[18+i] = weight_vec.at("dq")[0];
-                        i++;
+                        Q_.diagonal()[18+counter] = weight_vec.at("dq")[0];
+                        counter++;
                     }
 
                     // weight foot
-                    i = 0;
+                    counter = 0;
                     for(auto idx : solver_param_.subsystems_map_contact[problem]) // 实际循环2*3次
                     {   
                         if (param.at("contact_seq")[k][idx] == 1)
                         {
-                            Q_.diagonal()[24 + i] = weight_vec.at("foot_stance")[0];
-                            Q_.diagonal()[25 + i] = weight_vec.at("foot_stance")[1];
-                            Q_.diagonal()[26 + i] = weight_vec.at("foot_stance")[2];
+                            Q_.diagonal()[24 + counter] = weight_vec.at("foot_stance")[0];
+                            Q_.diagonal()[25 + counter] = weight_vec.at("foot_stance")[1];
+                            Q_.diagonal()[26 + counter] = weight_vec.at("foot_stance")[2];
                         }
                         else
                         {
-                            Q_.diagonal()[24 + i] = weight_vec.at("foot_swing")[0]; //分配摆动腿或站立腿权重
-                            Q_.diagonal()[25 + i] = weight_vec.at("foot_swing")[1];
-                            Q_.diagonal()[26 + i] = weight_vec.at("foot_swing")[2];
+                            Q_.diagonal()[24 + counter] = weight_vec.at("foot_swing")[0]; //分配摆动腿或站立腿权重
+                            Q_.diagonal()[25 + counter] = weight_vec.at("foot_swing")[1];
+                            Q_.diagonal()[26 + counter] = weight_vec.at("foot_swing")[2];
                         }
-                        i+=3;
+                        counter+=3;
                     }
 
                     // weight consensus 
@@ -337,29 +355,29 @@ void codmpcSolver::solve( bool &do_init,
                     Q_.diagonal()[36] = 0;
 
                     // weight tau
-                    i = 0;
+                    counter = 0;
                     for(auto idx : solver_param_.subsystems_map_joint[problem]) // 实际循环6次
                     {
-                        R_.diagonal()[i] = weight_vec.at("tau")[0];
-                        i++;
+                        R_.diagonal()[counter] = weight_vec.at("tau")[0];
+                        counter++;
                     }
 
                     // weight grf grf_aux
-                    i = 0;
+                    counter = 0;
                     for(auto idx : solver_param_.subsystems_map_contact["wb"])
                     {
-                        R_.diagonal()[6+i] = weight_vec.at("grf")[0];
-                        R_.diagonal()[7+i] = weight_vec.at("grf")[0];                            
-                        R_.diagonal()[8+i] = weight_vec.at("grf")[0];
-                        i+=3;
+                        R_.diagonal()[6+counter] = weight_vec.at("grf")[0];
+                        R_.diagonal()[7+counter] = weight_vec.at("grf")[0];                            
+                        R_.diagonal()[8+counter] = weight_vec.at("grf")[0];
+                        counter+=3;
                     }
                 }              
             }
             // pass to the codmpc sovler
-            // sendSolverData(problem_ref, problem_initial_condition, data_["wb"].tau[0]);  
+            // sendSolverData(problem_ref, x0, data_["wb"].tau[0]);  
             // receiveSolverResult();
 #ifdef USE_QPOASES 
-            bool success = qpOASESsolve(problem_initial_condition, problem_ref, problem_ref_u, problem);
+            bool success = qpOASESsolve(x0, x_ref, u_ref, problem);
             if (!success) {
                 std::cout << "MPC求解失败！" << std::endl;
             }
@@ -368,28 +386,26 @@ void codmpcSolver::solve( bool &do_init,
         quadruped_model_.updateGrfOld(data_["wb"].grf[0]);
         for (auto problem : solver_param_.subsystems_name)
         {   
-
-            // update state from solution
-            std::vector<std::vector<double>> x{};
             if (problem == "wb")
                 continue;
-            x = quadruped_model_.updatePrediction(x0_[problem], u_[problem], problem);
+            // update state from solution
+            std::vector<Eigen::VectorXd> x = quadruped_model_.updatePrediction(x0_[problem], u_[problem], problem);
             int n_joints {solver_param_.subsystems_map_joint[problem].size()}; //6
-            int counter{0};
+            int counter = 0;
             //update data state
             for (int k{0};k<solver_param_.N_+1;k++)
             {   
                 //p 
-                data_[problem].p[k][0] = x[k][0];
-                data_[problem].p[k][1] = x[k][1];
-                data_[problem].p[k][2] = x[k][2];
+                data_[problem].p[k][0] = x[k](0);
+                data_[problem].p[k][1] = x[k](1);
+                data_[problem].p[k][2] = x[k](2);
 
                 //rpy quat
-                data_[problem].rpy[k][0] = x[k][3];
-                data_[problem].rpy[k][1] = x[k][4];
-                data_[problem].rpy[k][2] = x[k][5];
+                data_[problem].rpy[k][0] = x[k](3);
+                data_[problem].rpy[k][1] = x[k](4);
+                data_[problem].rpy[k][2] = x[k](5);
 
-                Eigen::Quaterniond quat = rpyToquat(Eigen::Vector3d(x[k][3], x[k][4], x[k][5]));
+                Eigen::Quaterniond quat = rpyToquat(Eigen::Vector3d(x[k](3), x[k](4), x[k](5)));
 
                 data_[problem].quat[k][0] = quat.x();
                 data_[problem].quat[k][1] = quat.y();
@@ -400,25 +416,25 @@ void codmpcSolver::solve( bool &do_init,
                 counter = 0;
                 for(auto idx : solver_param_.subsystems_map_joint[problem]) //6个循环
                 {
-                    data_["wb"].q[k][idx] = x[k][6+counter];  // data_["wb"]放的是当前及预测状态，但是没放全   
+                    data_["wb"].q[k][idx] = x[k](6+counter);  // data_["wb"]放的是当前及预测状态，但是没放全   
                     counter++;
                 }
                 
                 //dp
-                data_[problem].dp[k][0] = x[k][12];
-                data_[problem].dp[k][1] = x[k][13];
-                data_[problem].dp[k][2] = x[k][14];
+                data_[problem].dp[k][0] = x[k](12);
+                data_[problem].dp[k][1] = x[k](13);
+                data_[problem].dp[k][2] = x[k](14);
 
                 //omega
-                data_[problem].omega[k][0] = x[k][15];
-                data_[problem].omega[k][1] = x[k][16];
-                data_[problem].omega[k][2] = x[k][17];
+                data_[problem].omega[k][0] = x[k](15);
+                data_[problem].omega[k][1] = x[k](16);
+                data_[problem].omega[k][2] = x[k](17);
 
                 //dq
                 counter = 0;
                 for(auto idx : solver_param_.subsystems_map_joint[problem])  //6个循环
                 {
-                    data_["wb"].dq[k][idx] = x[k][18+counter];
+                    data_["wb"].dq[k][idx] = x[k](18+counter);
                     counter++;
                 }
 
@@ -426,9 +442,9 @@ void codmpcSolver::solve( bool &do_init,
                 counter = 0;
                 for (auto idx : solver_param_.subsystems_map_contact[problem]) //循环2*3次
                 {
-                    data_["wb"].foot[k][3*idx]   = x[k][24+counter];
-                    data_["wb"].foot[k][3*idx+1] = x[k][25+counter];
-                    data_["wb"].foot[k][3*idx+2] = x[k][26+counter];
+                    data_["wb"].foot[k][3*idx]   = x[k](24+counter);
+                    data_["wb"].foot[k][3*idx+1] = x[k](25+counter);
+                    data_["wb"].foot[k][3*idx+2] = x[k](26+counter);
                     counter += 3;
                 }
 
@@ -440,7 +456,7 @@ void codmpcSolver::solve( bool &do_init,
                     counter = 0;
                     for(auto idx : solver_param_.subsystems_map_joint[problem])
                     {
-                        data_["wb"].tau[k][idx] = u_[problem][k][counter];
+                        data_["wb"].tau[k][idx] = u_[problem][k](counter);
                         counter++;
                     }
 
@@ -448,9 +464,9 @@ void codmpcSolver::solve( bool &do_init,
                     counter = 0;
                     for(auto idx : solver_param_.subsystems_map_contact[problem])
                     {
-                        data_["wb"].grf[k][3*idx] = u_[problem][k][n_joints+3*counter];
-                        data_["wb"].grf[k][3*idx+1] = u_[problem][k][n_joints+3*counter+1];
-                        data_["wb"].grf[k][3*idx+2] = u_[problem][k][n_joints+3*counter+2];
+                        data_["wb"].grf[k][3*idx] = u_[problem][k](n_joints+3*counter);
+                        data_["wb"].grf[k][3*idx+1] = u_[problem][k](n_joints+3*counter+1);
+                        data_["wb"].grf[k][3*idx+2] = u_[problem][k](n_joints+3*counter+2);
                         counter++;
                     }
                 }       
@@ -537,27 +553,27 @@ void codmpcSolver::getData(std::map<std::string,pdata> &data)
     data = data_;
 }
 
-void codmpcSolver::sendSolverData(std::vector<std::vector<double>> const &reference, std::vector<double> const &initial_condition, std::vector<double> const &u0_init) {
+// void codmpcSolver::sendSolverData(std::vector<std::vector<double>> const &reference, std::vector<double> const &initial_condition, std::vector<double> const &u0_init) {
 
-     // TODO
-    return;
-}
+//      // TODO
+//     return;
+// }
 
 
-void codmpcSolver::receiveSolverResult() {
+// void codmpcSolver::receiveSolverResult() {
 
-     // TODO
-    return;
-}
+//      // TODO
+//     return;
+// }
 
 #ifdef USE_QPOASES
 
 // 计算MPC问题转化为QP问题时的H矩阵和g向量
 // 使用Eigen::DiagonalMatrix存储Q和R，利用Eigen内部优化
-void codmpcSolver::computeQPmatrices(std::string const &subsystems_name, 
-    std::vector<double> const &problem_initial_condition, 
-    std::vector<std::vector<double>> const &problem_ref,
-    std::vector<std::vector<double>> const &problem_ref_u,
+void codmpcSolver::computeQPmatrices(std::string const &subsystems_name,
+    Eigen::VectorXd const &x0, 
+    std::vector<Eigen::VectorXd> const &x_ref,
+    std::vector<Eigen::VectorXd> const &u_ref,
     Eigen::MatrixXd& H, Eigen::VectorXd& g) {
     // 参数设置
     int const &PREDICTION_HORIZON = solver_param_.N_;
@@ -568,19 +584,6 @@ void codmpcSolver::computeQPmatrices(std::string const &subsystems_name,
     Eigen::MatrixXd const &B_d = quadruped_model_.Bk_[subsystems_name];
     Eigen::DiagonalMatrix<double, Eigen::Dynamic> const &Q = Q_;
     Eigen::DiagonalMatrix<double, Eigen::Dynamic> const &R = R_;
-    
-    //数据类型转换
-    Eigen::VectorXd x0 = Eigen::VectorXd::Map(problem_initial_condition.data(), problem_initial_condition.size());
-    
-    std::vector<Eigen::VectorXd> x_ref;
-    for(int i=0; i<problem_ref.size(); ++i) {
-        x_ref.push_back(Eigen::VectorXd::Map(problem_ref[i].data(), problem_ref[i].size()));
-    }
-
-    std::vector<Eigen::VectorXd> u_ref;
-    for(int i=0; i<problem_ref_u.size(); ++i) {
-        u_ref.push_back(Eigen::VectorXd::Map(problem_ref_u[i].data(), problem_ref_u[i].size()));
-    }    
 
     // 初始化H矩阵和g向量
     const int total_control_dim = PREDICTION_HORIZON * CONTROL_DIM;
@@ -649,9 +652,9 @@ void codmpcSolver::computeQPmatrices(std::string const &subsystems_name,
     }
 }
 
-bool codmpcSolver::qpOASESsolve(std::vector<double> const &problem_initial_condition, 
-                                std::vector<std::vector<double>> const &problem_ref,
-                                std::vector<std::vector<double>> const &problem_ref_u,
+bool codmpcSolver::qpOASESsolve(Eigen::VectorXd const &x0, 
+                                std::vector<Eigen::VectorXd> const &x_ref,
+                                std::vector<Eigen::VectorXd> const &u_ref,
                                 std::string const &subsystems_name) {
   
     // 参数设置
@@ -662,7 +665,7 @@ bool codmpcSolver::qpOASESsolve(std::vector<double> const &problem_initial_condi
     // 计算H矩阵和g向量
     Eigen::MatrixXd H;
     Eigen::VectorXd g;
-    computeQPmatrices(subsystems_name, problem_initial_condition, problem_ref, problem_ref_u, H, g);
+    computeQPmatrices(subsystems_name, x0, x_ref, u_ref, H, g);
     
     // 创建qpOASES问题
     qpOASES::SQProblem qp(PREDICTION_HORIZON*CONTROL_DIM, 0);
@@ -684,8 +687,7 @@ bool codmpcSolver::qpOASESsolve(std::vector<double> const &problem_initial_condi
         
         // 保存控制序列
         for (int i = 0; i < PREDICTION_HORIZON; ++i) {
-            Eigen::VectorXd uk = u_opt.segment(i*CONTROL_DIM, CONTROL_DIM);
-            u_[subsystems_name][i] = std::vector<double>(uk.data(), uk.data() + uk.size());
+            u_[subsystems_name][i] = u_opt.segment(i*CONTROL_DIM, CONTROL_DIM);
         }
         
         return true;

@@ -42,17 +42,17 @@ void quadrupedModel::modelInit(parameter const &model_param) {
     return;
 }      
 
-void quadrupedModel::modelUpdate(std::map<std::string,std::vector<double>> const &xk) {        
+void quadrupedModel::modelUpdate(std::map<std::string,std::vector<double>> const &x0_map) {        
     
     Eigen::VectorXd q(19);
     Eigen::VectorXd v(18);
-    q.segment(0, 3) = Eigen::Map<const Eigen::VectorXd>(xk.at("p").data(), xk.at("p").size());
-    q.segment(3, 4) = Eigen::Map<const Eigen::VectorXd>(xk.at("quat").data(), xk.at("quat").size());
-    v.segment(0, 3) = Eigen::Map<const Eigen::VectorXd>(xk.at("dp").data(), xk.at("dp").size());
-    v.segment(3, 3) = Eigen::Map<const Eigen::VectorXd>(xk.at("omega").data(), xk.at("omega").size());    
+    q.segment(0, 3) = Eigen::Map<const Eigen::VectorXd>(x0_map.at("p").data(), x0_map.at("p").size());
+    q.segment(3, 4) = Eigen::Map<const Eigen::VectorXd>(x0_map.at("quat").data(), x0_map.at("quat").size());
+    v.segment(0, 3) = Eigen::Map<const Eigen::VectorXd>(x0_map.at("dp").data(), x0_map.at("dp").size());
+    v.segment(3, 3) = Eigen::Map<const Eigen::VectorXd>(x0_map.at("omega").data(), x0_map.at("omega").size());    
     for (auto i{0};i < model_param_.n_joint_wb;i++) {
-        q(7+i) = xk.at("q")[i];
-        v(6+i) = xk.at("dq")[i];
+        q(7+i) = x0_map.at("q")[i];
+        v(6+i) = x0_map.at("dq")[i];
     }
     
     // 计算所有动力学项
@@ -63,10 +63,10 @@ void quadrupedModel::modelUpdate(std::map<std::string,std::vector<double>> const
     Eigen::VectorXd const &nle_wb = pin_data_.nle; //包含科里奥利力和重力项
 
     //计算角速度旋转矩阵
-    // Eigen::Quaterniond quat(xk["quat"][3], xk["quat"][0], xk["quat"][1], xk["quat"][2]);
+    // Eigen::Quaterniond quat(x0_map["quat"][3], x0_map["quat"][0], x0_map["quat"][1], x0_map["quat"][2]);
     // Eigen::Vector3d rpy = quatToRPY(quat);
     // Eigen::MatrixXd inv_jac_R = pinocchio::computeRpyJacobianInverse(rpy);
-    // Eigen::MatrixXd inv_jac_R = pinocchio::computeRpyJacobianInverse(xk["rpy"]);
+    // Eigen::MatrixXd inv_jac_R = pinocchio::computeRpyJacobianInverse(x0_map["rpy"]);
     Eigen::MatrixXd inv_jac_R = Eigen::MatrixXd::Identity(3, 3);
 
     //计算雅可比矩阵，用于计算外部力矩和填充模型参数
@@ -83,7 +83,7 @@ void quadrupedModel::modelUpdate(std::map<std::string,std::vector<double>> const
         if (subsystems_name == "wb") {
             continue;
         } 
-        updateSubsystem(subsystems_name, M_wb, nle_wb, inv_jac_R, xk);
+        updateSubsystem(subsystems_name, M_wb, nle_wb, inv_jac_R, x0_map);
     }
  
     return;
@@ -91,7 +91,7 @@ void quadrupedModel::modelUpdate(std::map<std::string,std::vector<double>> const
 
 void quadrupedModel::updateSubsystem(std::string const &subsystems_name, Eigen::MatrixXd const &M_wb, 
                                      Eigen::VectorXd const &nle_wb, Eigen::MatrixXd const &inv_jac_R,
-                                     std::map<std::string,std::vector<double>> const &xk) {
+                                     std::map<std::string,std::vector<double>> const &x0_map) {
     int s_idx = 0;
     if (subsystems_name == "front") {
         s_idx = 0;
@@ -118,21 +118,21 @@ void quadrupedModel::updateSubsystem(std::string const &subsystems_name, Eigen::
 
     // //计算外部力矩，注意是关节力矩不是足端力
     // Eigen::VectorXd ext_torque = Eigen::VectorXd::Zero(6+n_joint);
-    // Eigen::VectorXd grf = Eigen::Map<const Eigen::VectorXd>(xk.at("grf").data(), xk.at("grf").size());
+    // Eigen::VectorXd grf = Eigen::Map<const Eigen::VectorXd>(x0_map.at("grf").data(), x0_map.at("grf").size());
     // for(int idx = 0; idx < model_param_.n_contact_wb; ++idx) {
     //     if ((idx == s_idx) || (idx == (n_contact-1)+s_idx)) {
-    //         Eigen::VectorXd torque_wb = xk.at("contact")[idx]*J_linear_[idx].transpose()*grf.segment(3*idx, 3);
+    //         Eigen::VectorXd torque_wb = x0_map.at("contact")[idx]*J_linear_[idx].transpose()*grf.segment(3*idx, 3);
     //         ext_torque.segment(0, 6) += torque_wb.segment(0, 6);
     //         ext_torque.segment(6, 6) += torque_wb.segment(6+3*s_idx, n_joint);
     //     } else {
-    //         ext_torque.segment(0, 6) += (xk.at("contact")[idx]*J_linear_[idx].transpose()*grf.segment(3*idx, 3)).segment(0, 6);
+    //         ext_torque.segment(0, 6) += (x0_map.at("contact")[idx]*J_linear_[idx].transpose()*grf.segment(3*idx, 3)).segment(0, 6);
     //     }
     // }
 
     // 计算矩阵 S (12x18) 和向量 grf_old_nle (12x1)
     Eigen::MatrixXd S = Eigen::MatrixXd::Zero(6 + n_joint, n_joint + 3*n_contact + 3*n_contact);
     Eigen::VectorXd grf_old_nle = Eigen::VectorXd::Zero(6 + n_joint);
-    createSandGrfOldNle(subsystems_name, xk, S, grf_old_nle);
+    createSandGrfOldNle(subsystems_name, x0_map, S, grf_old_nle);
 
     //计算矩阵参数
     Eigen::MatrixXd inv_M = M.inverse();
@@ -176,26 +176,24 @@ void quadrupedModel::updateSubsystem(std::string const &subsystems_name, Eigen::
     return;
 }
 
-std::vector<std::vector<double>> quadrupedModel::updatePrediction(std::vector<double> const &x0,
-                                                                  std::vector<std::vector<double>> const &u,
-                                                                  std::string const &subsystems_name) {
+std::vector<Eigen::VectorXd> quadrupedModel::updatePrediction(Eigen::VectorXd const &x0,
+                                                            std::vector<Eigen::VectorXd> const &u,
+                                                            std::string const &subsystems_name) {
 
-    std::vector<std::vector<double>> xtraj(model_param_.N_+1, std::vector<double>(model_param_.n_state, 0.0));
+    std::vector<Eigen::VectorXd> xtraj(model_param_.N_+1, Eigen::VectorXd::Zero(model_param_.n_state));
     if (subsystems_name == "wb") {
         return xtraj;
     }
-    Eigen::VectorXd xk = Eigen::VectorXd::Map(x0.data(), x0.size());
+    Eigen::VectorXd xk = x0;
     xtraj[0] = x0;
 
     // xtraj.push_back(x0);                                 
     for(int i=0; i<model_param_.N_; ++i) {
-        Eigen::VectorXd uk = Eigen::Map<const Eigen::VectorXd>(u[i].data(), u[i].size());
-        xk = Ak_[subsystems_name]*xk + Bk_[subsystems_name]*uk;
+        xk = Ak_[subsystems_name]*xk + Bk_[subsystems_name]*u[i];
         xk(3) = normalizeAngle(xk(3));
         xk(4) = normalizeAngle(xk(4));
         xk(5) = normalizeAngle(xk(5));
-        // xtraj.push_back(std::vector<double>(xk.data(), xk.data() + xk.size()));
-        xtraj[i+1] = std::vector<double>(xk.data(), xk.data() + xk.size());
+        xtraj[i+1] = xk;
     }
                                         
     return xtraj;
@@ -209,7 +207,7 @@ void quadrupedModel::updateGrfOld(std::vector<double> const &grf_old) {
 }
 
 
-void quadrupedModel::createSandGrfOldNle(std::string const &subsystems_name, std::map<std::string,std::vector<double>> const &xk,
+void quadrupedModel::createSandGrfOldNle(std::string const &subsystems_name, std::map<std::string, std::vector<double>> const &x0_map,
                                         Eigen::MatrixXd &S, Eigen::VectorXd &grf_old_nle) {
     
     int s_idx = 0;
@@ -230,7 +228,7 @@ void quadrupedModel::createSandGrfOldNle(std::string const &subsystems_name, std
     // 设置 S 中与 tau 对应的部分 (后6行，前6列)
     S.block(6, 0, n_joint, n_joint) = Eigen::MatrixXd::Identity(n_joint, n_joint);
     
-    std::vector<double> contact_state = xk.at("contact");
+    std::vector<double> contact_state = x0_map.at("contact");
     // 根据 s_idx 处理 grf 和 grf_aux 部分
     if (s_idx == 0) { // s_idx == 0 (前半部分)
 

@@ -40,27 +40,27 @@ class codmpcSolver {
         codmpcSolver();
         void init(const parameter &solver_param);
         void solve( bool &do_init,
-                    const std::map<std::string,std::vector<double>> &initial_condition,
+                    const std::map<std::string,std::vector<double>> &x0_map,
                     const std::map<std::string,std::vector<std::vector<double>>> &ref,
                     const std::map<std::string,std::vector<std::vector<double>>> &param,
                     const std::map<std::string,std::vector<double>> &weight_vec);
         void getControl(std::vector<double> &des_q,std::vector<double> &des_dq,std::vector<double> &des_tau);
         void getData(std::map<std::string,pdata> &data);
         void prepare(); 
-        void sendSolverData(std::vector<std::vector<double>> const &reference, std::vector<double> const &initial_condition, std::vector<double> const &u0_init);
-        void receiveSolverResult();
+        // void sendSolverData(std::vector<std::vector<double>> const &reference, std::vector<double> const &initial_condition, std::vector<double> const &u0_init);
+        // void receiveSolverResult();
         Eigen::DiagonalMatrix<double, Eigen::Dynamic> Q_;
         Eigen::DiagonalMatrix<double, Eigen::Dynamic> R_;
 
 #ifdef USE_QPOASES
-        void computeQPmatrices(std::string const &subsystems_name, 
-                      std::vector<double> const &problem_initial_condition, 
-                      std::vector<std::vector<double>> const &problem_ref,
-                      std::vector<std::vector<double>> const &problem_ref_u,
-                      Eigen::MatrixXd& H, Eigen::VectorXd& g);
-        bool qpOASESsolve(std::vector<double> const &problem_initial_condition, 
-                                std::vector<std::vector<double>> const &problem_ref,
-                                std::vector<std::vector<double>> const &problem_ref_u,
+        void computeQPmatrices(std::string const &subsystems_name,
+                                Eigen::VectorXd const &x0, 
+                                std::vector<Eigen::VectorXd> const &x_ref,
+                                std::vector<Eigen::VectorXd> const &u_ref,
+                                Eigen::MatrixXd& H, Eigen::VectorXd& g);
+        bool qpOASESsolve(Eigen::VectorXd const &x0, 
+                                std::vector<Eigen::VectorXd> const &x_ref,
+                                std::vector<Eigen::VectorXd> const &u_ref,
                                 std::string const &subsystems_name);
 #endif
     
@@ -68,8 +68,8 @@ class codmpcSolver {
         parameter solver_param_;
         quadrupedModel quadruped_model_;
         std::map<std::string, pdata> data_;
-        std::map<std::string, std::vector<std::vector<double>>> u_;
-        std::map<std::string, std::vector<double>> x0_;
+        std::map<std::string, std::vector<Eigen::VectorXd>> u_;
+        std::map<std::string, Eigen::VectorXd> x0_;
 };
 
 #endif

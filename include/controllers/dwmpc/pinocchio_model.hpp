@@ -38,12 +38,12 @@ class quadrupedModel {
     quadrupedModel();
     ~quadrupedModel();
     void modelInit(parameter const &model_param);
-    void modelUpdate(std::map<std::string,std::vector<double>> const &xk);
-    std::vector<std::vector<double>> updatePrediction(std::vector<double> const &x0,
-                                                      std::vector<std::vector<double>> const &u,
-                                                      std::string const &subsystems_name);
+    void modelUpdate(std::map<std::string,std::vector<double>> const &x0_map);
+    std::vector<Eigen::VectorXd> updatePrediction(Eigen::VectorXd const &x0,
+                                                std::vector<Eigen::VectorXd> const &u,
+                                                std::string const &subsystems_name);
     void updateGrfOld(std::vector<double> const &grf_old);
-    void createSandGrfOldNle(std::string const &subsystems_name, std::map<std::string,std::vector<double>> const &xk,
+    void createSandGrfOldNle(std::string const &subsystems_name, std::map<std::string, std::vector<double>> const &x0_map,
                                         Eigen::MatrixXd &S, Eigen::VectorXd &grf_old_nle);
 
     std::map<std::string, Eigen::MatrixXd> Ak_;
@@ -52,7 +52,7 @@ class quadrupedModel {
     private:
     void updateSubsystem(std::string const &subsystems_name, Eigen::MatrixXd const &M_wb, 
                          Eigen::VectorXd const &nle_wb, Eigen::MatrixXd const &inv_jac_R,
-                         std::map<std::string,std::vector<double>> const &xk);
+                         std::map<std::string,std::vector<double>> const &x0_map);
     pinocchio::Model pin_model_;
     pinocchio::Data pin_data_;
     parameter model_param_;
