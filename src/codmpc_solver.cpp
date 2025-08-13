@@ -24,6 +24,11 @@ void codmpcSolver::init(const parameter &solver_param)
 
     std::cout << "codmpcSolver initialized!!!" << std::endl;
 
+#ifdef DEBUG_MODE
+    logger_front_.init("front_data.csv", solver_param_.n_state, solver_param_.n_control);
+    logger_back_.init("back_data.csv", solver_param_.n_state, solver_param_.n_control);
+#endif
+
     return;
 }
 
@@ -382,6 +387,15 @@ void codmpcSolver::solve( bool &do_init,
                 std::cout << "MPC求解失败！" << std::endl;
             }
 #endif  
+
+#ifdef DEBUG_MODE
+            //记录数据
+            if (problem == "front") {
+                logger_front_.logData(x0, x_ref[0], u_[problem][0], u_ref[0]);
+            } else if (problem == "back") {
+                logger_back_.logData(x0, x_ref[0], u_[problem][0], u_ref[0]);
+            } else {}
+#endif
         }     
         quadruped_model_.updateGrfOld(data_["wb"].grf[0]);
         for (auto problem : solver_param_.subsystems_name)

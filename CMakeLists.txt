@@ -35,6 +35,7 @@ add_library(${MODULE_LIBRARY_NAME} SHARED
 	# src/distributed_solver.cpp
 	src/codmpc_solver.cpp
 	src/pinocchio_model.cpp
+	src/robot_data_logger.cpp
 	# add other source files here
 )
 target_include_directories(${MODULE_LIBRARY_NAME}

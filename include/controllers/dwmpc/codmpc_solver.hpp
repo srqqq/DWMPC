@@ -13,6 +13,9 @@
 #include <csignal>
 #include <string>
 #include "controllers/dwmpc/pinocchio_model.hpp"
+#ifdef DEBUG_MODE
+#include "controllers/dwmpc/robot_data_logger.hpp"
+#endif
 
 #ifdef USE_QPOASES
 #include "qpOASES.hpp"
@@ -63,13 +66,17 @@ class codmpcSolver {
                                 std::vector<Eigen::VectorXd> const &u_ref,
                                 std::string const &subsystems_name);
 #endif
-    
     private:
         parameter solver_param_;
         quadrupedModel quadruped_model_;
         std::map<std::string, pdata> data_;
         std::map<std::string, std::vector<Eigen::VectorXd>> u_;
         std::map<std::string, Eigen::VectorXd> x0_;
+
+#ifdef DEBUG_MODE
+        RobotDataLogger logger_front_;
+        RobotDataLogger logger_back_;
+#endif
 };
 
 #endif
