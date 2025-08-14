@@ -249,6 +249,9 @@ namespace controllers
         //initialize the timer        
         std::vector<double> contact0 {timer_.run(loop_dt)};
         des_contact = contact0;
+
+        initial_condition["contact_cmd"] = contact0;
+
         // reorder_contact(des_contact);
 
         time_ += loop_dt;

@@ -228,7 +228,7 @@ void quadrupedModel::createSandGrfOldNle(std::string const &subsystems_name, std
     // 设置 S 中与 tau 对应的部分 (后6行，前6列)
     S.block(6, 0, n_joint, n_joint) = Eigen::MatrixXd::Identity(n_joint, n_joint);
     
-    std::vector<double> contact_state = x0_map.at("contact");
+    std::vector<double> contact_cmd = x0_map.at("contact_cmd");
     // 根据 s_idx 处理 grf 和 grf_aux 部分
     if (s_idx == 0) { // s_idx == 0 (前半部分)
 
@@ -238,16 +238,16 @@ void quadrupedModel::createSandGrfOldNle(std::string const &subsystems_name, std
             
             if (idx < n_contact) {  // grf 部分
                 int col_start = n_joint + 3*idx;
-                S.block(0, col_start, 6, 3) += contact_state[idx] * J_T.topLeftCorner(6, 3);
-                S.block(6, col_start, n_joint, 3) += contact_state[idx] * J_T.block(6 + 3*s_idx, 0, n_joint, 3);
+                S.block(0, col_start, 6, 3) += contact_cmd[idx] * J_T.topLeftCorner(6, 3);
+                S.block(6, col_start, n_joint, 3) += contact_cmd[idx] * J_T.block(6 + 3*s_idx, 0, n_joint, 3);
                 
             } else {  // grf_aux 部分
                 int col_start = n_joint + 3*n_contact + 3*(idx - n_contact);
-                S.block(0, col_start, 6, 3) += contact_state[idx] * J_T.topLeftCorner(6, 3);
-                S.block(6, col_start, n_joint, 3) += contact_state[idx] * J_T.block(6 + 3*s_idx, 0, n_joint, 3);
+                S.block(0, col_start, 6, 3) += contact_cmd[idx] * J_T.topLeftCorner(6, 3);
+                S.block(6, col_start, n_joint, 3) += contact_cmd[idx] * J_T.block(6 + 3*s_idx, 0, n_joint, 3);
                 
                 // grf_old 部分
-                grf_old_nle.head(6) += contact_state[idx] * J_T.topLeftCorner(6, 3) * grf_old_wb.segment(3*idx, 3);
+                grf_old_nle.head(6) += contact_cmd[idx] * J_T.topLeftCorner(6, 3) * grf_old_wb.segment(3*idx, 3);
             }
         }
     } else {  // s_idx == 2 (后半部分)
@@ -258,15 +258,15 @@ void quadrupedModel::createSandGrfOldNle(std::string const &subsystems_name, std
             
             if (idx < n_contact) {  // grf_aux 部分
                 int col_start = n_joint + 3*n_contact + 3*idx;
-                S.block(0, col_start, 6, 3) += contact_state[idx] * J_T.topLeftCorner(6, 3);
-                S.block(6, col_start, n_joint, 3) += contact_state[idx] * J_T.block(6 + 3*s_idx, 0, n_joint, 3);
+                S.block(0, col_start, 6, 3) += contact_cmd[idx] * J_T.topLeftCorner(6, 3);
+                S.block(6, col_start, n_joint, 3) += contact_cmd[idx] * J_T.block(6 + 3*s_idx, 0, n_joint, 3);
                 
                 // grf_old 部分
-                grf_old_nle.head(6) += contact_state[idx] * J_T.topLeftCorner(6, 3) * grf_old_wb.segment(3*idx, 3);
+                grf_old_nle.head(6) += contact_cmd[idx] * J_T.topLeftCorner(6, 3) * grf_old_wb.segment(3*idx, 3);
             } else {  // grf 部分
                 int col_start = n_joint + 3*(idx - n_contact);
-                S.block(0, col_start, 6, 3) += contact_state[idx] * J_T.topLeftCorner(6, 3);
-                S.block(6, col_start, n_joint, 3) += contact_state[idx] * J_T.block(6 + 3*s_idx, 0, n_joint, 3);
+                S.block(0, col_start, 6, 3) += contact_cmd[idx] * J_T.topLeftCorner(6, 3);
+                S.block(6, col_start, n_joint, 3) += contact_cmd[idx] * J_T.block(6 + 3*s_idx, 0, n_joint, 3);
             }
         }
     }
