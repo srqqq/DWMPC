@@ -15,9 +15,9 @@ void quadrupedModel::modelInit(parameter const &model_param) {
 
     contact_frame_name_list_wb_ = {"FL_foot", "FR_foot", "RL_foot", "RR_foot"};
 
-    J_linear_.resize(model_param_.n_contact_wb);
+    J_linear_wb_.resize(model_param_.n_contact_wb);
 
-    grf_old_wb_.resize(model_param_.n_contact_wb*3);
+    J_linear_.resize(model_param_.n_contact_wb);
 
     // 设置文件路径
     std::string urdf_filename{"/usr/include/dls2/controllers/dwmpc/urdf/go2.urdf"};
@@ -75,7 +75,13 @@ void quadrupedModel::modelUpdate(std::map<std::string,std::vector<double>> const
         Eigen::MatrixXd J(6, pin_model_.nv);
         pinocchio::getFrameJacobian(pin_model_, pin_data_, frame_id, pinocchio::LOCAL_WORLD_ALIGNED, J);
         // pinocchio::getFrameJacobian(pin_model_, pin_data_, frame_id, pinocchio::LOCAL, J);
-        J_linear_[i] = J.topRows(3);
+        J_linear_wb_[i] = J.topRows(3);
+        // 更新子系统雅可比
+        int s_idx = (i < model_param_.n_contact? 0 : 2);
+        Eigen::MatrixXd J_temp(3, 12);
+        J_temp.block(0, 0, 3, 6) = J_linear_wb_[i].block(0, 0, 3, 6);
+        J_temp.block(0, 6, 3, 6) = J_linear_wb_[i].block(0, 6+3*s_idx, 3, 6);
+        J_linear_[i] = J_temp;
     }
 
     // 更新子系统
@@ -121,22 +127,21 @@ void quadrupedModel::updateSubsystem(std::string const &subsystems_name, Eigen::
     // Eigen::VectorXd grf = Eigen::Map<const Eigen::VectorXd>(x0_map.at("grf").data(), x0_map.at("grf").size());
     // for(int idx = 0; idx < model_param_.n_contact_wb; ++idx) {
     //     if ((idx == s_idx) || (idx == (n_contact-1)+s_idx)) {
-    //         Eigen::VectorXd torque_wb = x0_map.at("contact")[idx]*J_linear_[idx].transpose()*grf.segment(3*idx, 3);
+    //         Eigen::VectorXd torque_wb = x0_map.at("contact")[idx]*J_linear_wb_[idx].transpose()*grf.segment(3*idx, 3);
     //         ext_torque.segment(0, 6) += torque_wb.segment(0, 6);
     //         ext_torque.segment(6, 6) += torque_wb.segment(6+3*s_idx, n_joint);
     //     } else {
-    //         ext_torque.segment(0, 6) += (x0_map.at("contact")[idx]*J_linear_[idx].transpose()*grf.segment(3*idx, 3)).segment(0, 6);
+    //         ext_torque.segment(0, 6) += (x0_map.at("contact")[idx]*J_linear_wb_[idx].transpose()*grf.segment(3*idx, 3)).segment(0, 6);
     //     }
     // }
 
-    // 计算矩阵 S (12x18) 和向量 grf_old_nle (12x1)
-    Eigen::MatrixXd S = Eigen::MatrixXd::Zero(6 + n_joint, n_joint + 3*n_contact + 3*n_contact);
-    Eigen::VectorXd grf_old_nle = Eigen::VectorXd::Zero(6 + n_joint);
-    createSandGrfOldNle(subsystems_name, x0_map, S, grf_old_nle);
+    // 计算矩阵 S (12x12)
+    Eigen::MatrixXd S = Eigen::MatrixXd::Zero(6 + n_joint, n_joint + 3*n_contact);
+    createSelectMatrix(subsystems_name, x0_map, S);
 
     //计算矩阵参数
     Eigen::MatrixXd inv_M = M.inverse();
-    Eigen::VectorXd delta = inv_M*(-nle+grf_old_nle);
+    Eigen::VectorXd delta = inv_M*(-nle);
 
     //组建离散模型矩阵，只修改变化的部分
     double dt = 0.02; //dt==loop_dt 或者 dt>loop_dt
@@ -145,33 +150,33 @@ void quadrupedModel::updateSubsystem(std::string const &subsystems_name, Eigen::
     Ak_[subsystems_name].block(6, 18, 6, 6) = Eigen::MatrixXd::Identity(6, 6)*dt;
     Ak_[subsystems_name].block(12, 36, 12, 1) = delta*dt;
 
-    Eigen::MatrixXd J_linear_subsystem1(3,12); //???存疑，需要再仔细考虑下是否可以这样计算，不行就按全身动力学计算
-    Eigen::MatrixXd J_linear_subsystem2(3,12);
-    J_linear_subsystem1.block(0, 0, 3, 6) = J_linear_[s_idx].block(0, 0, 3, 6);
-    J_linear_subsystem1.block(0, 6, 3, 6) = J_linear_[s_idx].block(0, 6+3*s_idx, 3, 6);
-    J_linear_subsystem2.block(0, 0, 3, 6) = J_linear_[s_idx+1].block(0, 0, 3, 6);
-    J_linear_subsystem2.block(0, 6, 3, 6) = J_linear_[s_idx+1].block(0, 6+3*s_idx, 3, 6);
+    // Eigen::MatrixXd J_linear_subsystem1(3,12); //???存疑，需要再仔细考虑下是否可以这样计算，不行就按全身动力学计算
+    // Eigen::MatrixXd J_linear_subsystem2(3,12);
+    // J_linear_subsystem1.block(0, 0, 3, 6) = J_linear_wb_[s_idx].block(0, 0, 3, 6);
+    // J_linear_subsystem1.block(0, 6, 3, 6) = J_linear_wb_[s_idx].block(0, 6+3*s_idx, 3, 6);
+    // J_linear_subsystem2.block(0, 0, 3, 6) = J_linear_wb_[s_idx+1].block(0, 0, 3, 6);
+    // J_linear_subsystem2.block(0, 6, 3, 6) = J_linear_wb_[s_idx+1].block(0, 6+3*s_idx, 3, 6);
 
     // if (s_idx == 0) {
-    //     J_linear_subsystem1.block(0, 0, 3, 6) = J_linear_[s_idx].block(0, 0, 3, 6);
-    //     J_linear_subsystem1.block(0, 6, 3, 6) = J_linear_[s_idx].block(0, 6, 3, 6);
-    //     J_linear_subsystem2.block(0, 0, 3, 6) = J_linear_[s_idx+1].block(0, 0, 3, 6);
-    //     J_linear_subsystem2.block(0, 6, 3, 6) = J_linear_[s_idx+1].block(0, 6, 3, 6);
+    //     J_linear_subsystem1.block(0, 0, 3, 6) = J_linear_wb_[s_idx].block(0, 0, 3, 6);
+    //     J_linear_subsystem1.block(0, 6, 3, 6) = J_linear_wb_[s_idx].block(0, 6, 3, 6);
+    //     J_linear_subsystem2.block(0, 0, 3, 6) = J_linear_wb_[s_idx+1].block(0, 0, 3, 6);
+    //     J_linear_subsystem2.block(0, 6, 3, 6) = J_linear_wb_[s_idx+1].block(0, 6, 3, 6);
     // } else {
-    //     J_linear_subsystem1.block(0, 0, 3, 6) = J_linear_[s_idx].block(0, 0, 3, 6);
-    //     J_linear_subsystem1.block(0, 6, 3, 6) = J_linear_[s_idx].block(0, 12, 3, 6);
-    //     J_linear_subsystem2.block(0, 0, 3, 6) = J_linear_[s_idx+1].block(0, 0, 3, 6);
-    //     J_linear_subsystem2.block(0, 6, 3, 6) = J_linear_[s_idx+1].block(0, 12, 3, 6);
+    //     J_linear_subsystem1.block(0, 0, 3, 6) = J_linear_wb_[s_idx].block(0, 0, 3, 6);
+    //     J_linear_subsystem1.block(0, 6, 3, 6) = J_linear_wb_[s_idx].block(0, 12, 3, 6);
+    //     J_linear_subsystem2.block(0, 0, 3, 6) = J_linear_wb_[s_idx+1].block(0, 0, 3, 6);
+    //     J_linear_subsystem2.block(0, 6, 3, 6) = J_linear_wb_[s_idx+1].block(0, 12, 3, 6);
     // }
 
-    Ak_[subsystems_name].block(24, 12, 3, 12) = J_linear_subsystem1*dt;
-    Ak_[subsystems_name].block(27, 12, 3, 12) = J_linear_subsystem2*dt;
+    Ak_[subsystems_name].block(24, 12, 3, 12) = J_linear_[s_idx]*dt;
+    Ak_[subsystems_name].block(27, 12, 3, 12) = J_linear_[s_idx+1]*dt;
     Ak_[subsystems_name].block(30, 36, 6, 1) = delta.segment(0, 6)*dt;
     Ak_[subsystems_name](36,36) = 1.0;
 
     Eigen::MatrixXd B_temp = inv_M*S;
-    Bk_[subsystems_name].block(12, 0, 12, 18) = B_temp*dt;
-    Bk_[subsystems_name].block(30, 0, 6, 18) = B_temp.block(0, 0, 6, 18)*dt;
+    Bk_[subsystems_name].block(12, 0, 12, 12) = B_temp*dt;
+    Bk_[subsystems_name].block(30, 0, 6, 12) = B_temp.block(0, 0, 6, 12)*dt;
 
     return;
 }
@@ -199,16 +204,9 @@ std::vector<Eigen::VectorXd> quadrupedModel::updatePrediction(Eigen::VectorXd co
     return xtraj;
 }
 
-void quadrupedModel::updateGrfOld(std::vector<double> const &grf_old) {
-    
-    grf_old_wb_ = grf_old;
 
-    return;
-}
-
-
-void quadrupedModel::createSandGrfOldNle(std::string const &subsystems_name, std::map<std::string, std::vector<double>> const &x0_map,
-                                        Eigen::MatrixXd &S, Eigen::VectorXd &grf_old_nle) {
+void quadrupedModel::createSelectMatrix(std::string const &subsystems_name, std::map<std::string, std::vector<double>> const &x0_map,
+                                        Eigen::MatrixXd &S) {
     
     int s_idx = 0;
     if (subsystems_name == "front") {
@@ -220,57 +218,18 @@ void quadrupedModel::createSandGrfOldNle(std::string const &subsystems_name, std
     }
     
     int const &n_joint = model_param_.n_joint;
-    int const &n_contact_wb = model_param_.n_contact_wb;
     int const &n_contact = model_param_.n_contact;
     
-    Eigen::VectorXd grf_old_wb = Eigen::VectorXd::Map(grf_old_wb_.data(), grf_old_wb_.size());
-
     // 设置 S 中与 tau 对应的部分 (后6行，前6列)
-    S.block(6, 0, n_joint, n_joint) = Eigen::MatrixXd::Identity(n_joint, n_joint);
+    S.block(n_joint, 0, n_joint, n_joint) = Eigen::MatrixXd::Identity(n_joint, n_joint);
     
     std::vector<double> contact_cmd = x0_map.at("contact_cmd");
-    // 根据 s_idx 处理 grf 和 grf_aux 部分
-    if (s_idx == 0) { // s_idx == 0 (前半部分)
-
-        // 前半部分: grf_wb = [grf; grf_old[6:] + grf_aux]
-        for (int idx = 0; idx < n_contact_wb; ++idx) {   
-            Eigen::MatrixXd J_T = J_linear_[idx].transpose();
-            
-            if (idx < n_contact) {  // grf 部分
-                int col_start = n_joint + 3*idx;
-                S.block(0, col_start, 6, 3) += contact_cmd[idx] * J_T.topLeftCorner(6, 3);
-                S.block(6, col_start, n_joint, 3) += contact_cmd[idx] * J_T.block(6 + 3*s_idx, 0, n_joint, 3);
-                
-            } else {  // grf_aux 部分
-                int col_start = n_joint + 3*n_contact + 3*(idx - n_contact);
-                S.block(0, col_start, 6, 3) += contact_cmd[idx] * J_T.topLeftCorner(6, 3);
-                S.block(6, col_start, n_joint, 3) += contact_cmd[idx] * J_T.block(6 + 3*s_idx, 0, n_joint, 3);
-                
-                // grf_old 部分
-                grf_old_nle.head(6) += contact_cmd[idx] * J_T.topLeftCorner(6, 3) * grf_old_wb.segment(3*idx, 3);
-            }
-        }
-    } else {  // s_idx == 2 (后半部分)
-
-        // 后半部分: grf_wb = [grf_old[:6] + grf_aux; grf]
-        for (int idx = 0; idx < n_contact_wb; ++idx) {
-            Eigen::MatrixXd J_T = J_linear_[idx].transpose();
-            
-            if (idx < n_contact) {  // grf_aux 部分
-                int col_start = n_joint + 3*n_contact + 3*idx;
-                S.block(0, col_start, 6, 3) += contact_cmd[idx] * J_T.topLeftCorner(6, 3);
-                S.block(6, col_start, n_joint, 3) += contact_cmd[idx] * J_T.block(6 + 3*s_idx, 0, n_joint, 3);
-                
-                // grf_old 部分
-                grf_old_nle.head(6) += contact_cmd[idx] * J_T.topLeftCorner(6, 3) * grf_old_wb.segment(3*idx, 3);
-            } else {  // grf 部分
-                int col_start = n_joint + 3*(idx - n_contact);
-                S.block(0, col_start, 6, 3) += contact_cmd[idx] * J_T.topLeftCorner(6, 3);
-                S.block(6, col_start, n_joint, 3) += contact_cmd[idx] * J_T.block(6 + 3*s_idx, 0, n_joint, 3);
-            }
-        }
+    // 只算前半部分grf
+    for (int idx = 0; idx < n_contact; ++idx) { 
+        Eigen::MatrixXd J_T = J_linear_[s_idx+idx].transpose();
+        S.block(0, n_joint+3*idx, 6+n_joint, 3) =  contact_cmd[s_idx+idx] * J_T;
     }
-    
+
     return;
 }
 

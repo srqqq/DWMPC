@@ -33,8 +33,7 @@ def visualize_robot_data(csv_file_path):
                        'vx', 'vy', 'vz', 'rollrate', 'pitchrate', 'yawrate',
                        '1']
         control_title = ['tau1', 'tau2', 'tau3', 'tau4', 'tau5', 'tau6', 
-                         'grfx1', 'grfy1', 'grfz1', 'grfx2', 'grfy2', 'grfz2',
-                         'grfauxx1', 'grfauxy1', 'grfauxz1', 'grfauxx2', 'grfauxy2', 'grfauxz2']
+                         'grfx1', 'grfy1', 'grfz1', 'grfx2', 'grfy2', 'grfz2']
 
         # 绘制前35组（每组1维状态）
         for i in range(35):
@@ -64,12 +63,12 @@ def visualize_robot_data(csv_file_path):
 
         # 创建第二个窗口：控制输入
         print("Create control input graph...")
-        fig2, axs2 = plt.subplots(3, 6, figsize=(20, 24))
+        fig2, axs2 = plt.subplots(2, 6, figsize=(20, 24))
         fig2.suptitle('control input', fontsize=20, y=0.99)
         axs2 = axs2.flatten()  # 将子图数组展平以便迭代
 
-        # 绘制18组（每组1维状态）
-        for i in range(18):
+        # 绘制12组（每组1维状态）
+        for i in range(12):
             axs2[i].plot(time, df[f'u_{i}'], label=f'u_{i}', linewidth=1.5)
             axs2[i].plot(time, df[f'u_ref_{i}'], label=f'u_ref_{i}', linestyle='--', linewidth=1.5)
             axs2[i].set_title(control_title[i], fontsize=10)

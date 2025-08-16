@@ -42,9 +42,8 @@ class quadrupedModel {
     std::vector<Eigen::VectorXd> updatePrediction(Eigen::VectorXd const &x0,
                                                 std::vector<Eigen::VectorXd> const &u,
                                                 std::string const &subsystems_name);
-    void updateGrfOld(std::vector<double> const &grf_old);
-    void createSandGrfOldNle(std::string const &subsystems_name, std::map<std::string, std::vector<double>> const &x0_map,
-                                        Eigen::MatrixXd &S, Eigen::VectorXd &grf_old_nle);
+    void createSelectMatrix(std::string const &subsystems_name, std::map<std::string, std::vector<double>> const &x0_map,
+                            Eigen::MatrixXd &S);
 
     std::map<std::string, Eigen::MatrixXd> Ak_;
     std::map<std::string, Eigen::MatrixXd> Bk_;
@@ -58,8 +57,8 @@ class quadrupedModel {
     parameter model_param_;
     std::vector<std::string> subsystems_name_list_;
     std::vector<std::string> contact_frame_name_list_wb_;
-    std::vector<Eigen::MatrixXd> J_linear_; //足端线速度雅可比矩阵
-    std::vector<double> grf_old_wb_;
+    std::vector<Eigen::MatrixXd> J_linear_wb_; //足端线速度雅可比矩阵
+    std::vector<Eigen::MatrixXd> J_linear_; //子系统足端线速度雅可比矩阵
 };
 
 double normalizeAngle(double angle);

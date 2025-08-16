@@ -269,7 +269,7 @@ void codmpcSolver::solve( bool &do_init,
                     ++counter;
                 }
 
-                // set grf and grf_aux //这里和原代码不同，我们只优化grf、grf_aux而不是grf_wb，因此只给当前子系统赋值即可
+                // set grf //这里和原代码不同，我们只优化grf而不是grf_wb，因此只给当前子系统赋值即可
                 counter=0;
                 for(auto idx : solver_param_.subsystems_map_contact[problem]) //循环3*2=6次
                 {
@@ -278,16 +278,7 @@ void codmpcSolver::solve( bool &do_init,
                     u_ref_k(8+counter) = ref.at("grf")[k][3*idx+2];
                     counter+=3;              
                 }
-                counter=0;
-                for(auto idx : solver_param_.subsystems_map_contact[problem]) //循环3*2=6次
-                {
 
-                    u_ref_k(12+counter) = 0.0;
-                    u_ref_k(13+counter) = 0.0;
-                    u_ref_k(14+counter) = 0.0;
-                    counter+=3;
-                }
-    
                 u_ref.push_back(u_ref_k);
 
                 ////  ============ WEIGHT  ============                
@@ -369,7 +360,7 @@ void codmpcSolver::solve( bool &do_init,
 
                     // weight grf grf_aux
                     counter = 0;
-                    for(auto idx : solver_param_.subsystems_map_contact["wb"])
+                    for(auto idx : solver_param_.subsystems_map_contact[problem])
                     {
                         R_.diagonal()[6+counter] = weight_vec.at("grf")[0];
                         R_.diagonal()[7+counter] = weight_vec.at("grf")[0];                            
@@ -397,7 +388,6 @@ void codmpcSolver::solve( bool &do_init,
             } else {}
 #endif
         }     
-        quadruped_model_.updateGrfOld(data_["wb"].grf[0]);
         for (auto problem : solver_param_.subsystems_name)
         {   
             if (problem == "wb")
@@ -705,6 +695,8 @@ bool codmpcSolver::qpOASESsolve(Eigen::VectorXd const &x0,
         }
         
         return true;
+    } else {
+        std::cout <<"status = " <<status<<std::endl;
     }
     
     return false;
