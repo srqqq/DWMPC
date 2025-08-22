@@ -57,11 +57,12 @@ class codmpcSolver {
 
 #ifdef USE_QPOASES
         void computeQPmatrices(std::string const &subsystems_name,
-                                Eigen::VectorXd const &x0, 
-                                std::vector<Eigen::VectorXd> const &x_ref,
-                                std::vector<Eigen::VectorXd> const &u_ref,
-                                Eigen::MatrixXd& H, Eigen::VectorXd& g);
-        bool qpOASESsolve(Eigen::VectorXd const &x0, 
+                               Eigen::VectorXd const &x0, std::map<std::string,std::vector<double>> const &x0_map,
+                               std::vector<Eigen::VectorXd> const &x_ref,
+                               std::vector<Eigen::VectorXd> const &u_ref,
+                               Eigen::MatrixXd& H, Eigen::VectorXd& g, 
+                               Eigen::MatrixXd& Ac, Eigen::VectorXd& lbAc, Eigen::VectorXd& ubAc);
+        bool qpOASESsolve(Eigen::VectorXd const &x0, std::map<std::string,std::vector<double>> const &x0_map,
                                 std::vector<Eigen::VectorXd> const &x_ref,
                                 std::vector<Eigen::VectorXd> const &u_ref,
                                 std::string const &subsystems_name);

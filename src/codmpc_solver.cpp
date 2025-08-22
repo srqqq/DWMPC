@@ -373,7 +373,7 @@ void codmpcSolver::solve( bool &do_init,
             // sendSolverData(problem_ref, x0, data_["wb"].tau[0]);  
             // receiveSolverResult();
 #ifdef USE_QPOASES 
-            bool success = qpOASESsolve(x0, x_ref, u_ref, problem);
+            bool success = qpOASESsolve(x0, x0_map, x_ref, u_ref, problem);
             if (!success) {
                 std::cout << "MPC求解失败！" << std::endl;
             }
@@ -575,14 +575,33 @@ void codmpcSolver::getData(std::map<std::string,pdata> &data)
 // 计算MPC问题转化为QP问题时的H矩阵和g向量
 // 使用Eigen::DiagonalMatrix存储Q和R，利用Eigen内部优化
 void codmpcSolver::computeQPmatrices(std::string const &subsystems_name,
-    Eigen::VectorXd const &x0, 
+    Eigen::VectorXd const &x0, std::map<std::string,std::vector<double>> const &x0_map,
     std::vector<Eigen::VectorXd> const &x_ref,
     std::vector<Eigen::VectorXd> const &u_ref,
-    Eigen::MatrixXd& H, Eigen::VectorXd& g) {
+    Eigen::MatrixXd& H, Eigen::VectorXd& g, 
+    Eigen::MatrixXd& Ac, Eigen::VectorXd& lbAc, Eigen::VectorXd& ubAc) {
     // 参数设置
+    int s_idx = 0;
+    if (subsystems_name == "front") {
+        s_idx = 0;
+    } else if (subsystems_name == "back") {
+        s_idx = 2;
+    } else {
+        return;
+    }
+
     int const &PREDICTION_HORIZON = solver_param_.N_;
     int const &STATE_DIM = solver_param_.n_state;
     int const &CONTROL_DIM = solver_param_.n_control;
+    int const CONSTRAIN_DIM = 16;
+
+    Eigen::MatrixXd M_foot_vel = Eigen::MatrixXd::Zero(6, STATE_DIM);
+    std::vector<double> contact_cmd = x0_map.at("contact_cmd");
+    M_foot_vel.block(0, 0, 3, 12) = contact_cmd[s_idx]*quadruped_model_.J_linear_[s_idx];
+    M_foot_vel.block(3, 0, 3, 12) = contact_cmd[s_idx+1]*quadruped_model_.J_linear_[s_idx+1];
+    double const epsilon = 1e-3;
+    Eigen::VectorXd const vec_epsilon = epsilon*Eigen::VectorXd::Ones(6);
+    double const neg_inf = -std::numeric_limits<double>::infinity();
 
     Eigen::MatrixXd const &A_d = quadruped_model_.Ak_[subsystems_name];
     Eigen::MatrixXd const &B_d = quadruped_model_.Bk_[subsystems_name];
@@ -590,9 +609,14 @@ void codmpcSolver::computeQPmatrices(std::string const &subsystems_name,
     Eigen::DiagonalMatrix<double, Eigen::Dynamic> const &R = R_;
 
     // 初始化H矩阵和g向量
-    const int total_control_dim = PREDICTION_HORIZON * CONTROL_DIM;
+    int const total_control_dim = PREDICTION_HORIZON * CONTROL_DIM;
     H = Eigen::MatrixXd::Zero(total_control_dim, total_control_dim);
     g = Eigen::VectorXd::Zero(total_control_dim);
+
+    int const total_constrain_dim = CONSTRAIN_DIM*PREDICTION_HORIZON;
+    Ac = Eigen::MatrixXd::Zero(total_constrain_dim, total_control_dim);
+    lbAc = Eigen::VectorXd::Zero(total_constrain_dim);
+    ubAc = Eigen::VectorXd::Zero(total_constrain_dim);
     
     // 存储状态预测的中间结果
     std::vector<Eigen::MatrixXd> Phi(PREDICTION_HORIZON);
@@ -653,10 +677,65 @@ void codmpcSolver::computeQPmatrices(std::string const &subsystems_name,
         
         // 将计算好的段放入g向量
         g.segment(start_idx, CONTROL_DIM) = g_segment;
+
+        // 计算线性约束矩阵       
+        // constrain 1: foot noslip
+        Eigen::MatrixXd Ac_foot_noslip = M_foot_vel*Gamma[k];
+        Eigen::VectorXd vec_foot_vel = M_foot_vel*(Phi[k]*x0+Gamma[k]*u_ref[k]);
+        Eigen::VectorXd lbAc_foot_noslip = -vec_epsilon - vec_foot_vel;
+        Eigen::VectorXd ubAc_foot_noslip = vec_epsilon - vec_foot_vel;
+
+        // constrain 2: friction cone
+        double const mu = 0.5;
+        double const fz_max = 500;
+        Eigen::MatrixXd M_friction(5, 3);
+        M_friction << 1, 0, -mu,
+                     -1, 0, -mu,
+                      0, 1, -mu,
+                      0, 1, -mu,
+                      0, 0, 1;
+        Eigen::MatrixXd Ac_friction_cone = Eigen::MatrixXd::Zero(10, 12);
+        Ac_friction_cone.block(0, 6, 5, 3) = M_friction;
+        Ac_friction_cone.block(5, 9, 5, 3) = M_friction;
+        Eigen::VectorXd lbAc_friction_cone(10);
+        Eigen::VectorXd ubAc_friction_cone(10);
+        lbAc_friction_cone << neg_inf, neg_inf, neg_inf, neg_inf, 0,
+                              neg_inf, neg_inf, neg_inf, neg_inf, 0;
+        ubAc_friction_cone << 0, 0, 0, 0, fz_max,
+                              0, 0, 0, 0, fz_max;
+        
+        // 构造子矩阵
+        Eigen::MatrixXd Ac_k = Eigen::MatrixXd::Zero(CONSTRAIN_DIM, CONTROL_DIM);
+        Eigen::VectorXd lbAc_k = Eigen::VectorXd::Zero(CONSTRAIN_DIM);
+        Eigen::VectorXd ubAc_k = Eigen::VectorXd::Zero(CONSTRAIN_DIM);        
+        // 依次填充子矩阵到对应位置
+        int current_row = 0;
+        Ac_k.middleRows(current_row, Ac_foot_noslip.rows()) = Ac_foot_noslip; 
+        current_row += Ac_foot_noslip.rows();
+        Ac_k.middleRows(current_row, Ac_friction_cone.rows()) = Ac_friction_cone; 
+        current_row += Ac_friction_cone.rows();
+
+        // 依次填充子向量到对应位置
+        current_row = 0;
+        lbAc_k.segment(current_row, lbAc_foot_noslip.size()) = lbAc_foot_noslip;  // 从索引0开始，填充a的2个元素
+        current_row += lbAc_foot_noslip.size();
+        lbAc_k.segment(current_row, lbAc_friction_cone.size()) = lbAc_friction_cone;  // 从索引2开始，填充b的3个元素
+        current_row += lbAc_friction_cone.size();
+
+        current_row = 0;
+        ubAc_k.segment(current_row, ubAc_foot_noslip.size()) = ubAc_foot_noslip;  // 从索引0开始，填充a的2个元素
+        current_row += ubAc_foot_noslip.size();
+        ubAc_k.segment(current_row, ubAc_friction_cone.size()) = ubAc_friction_cone;  // 从索引2开始，填充b的3个元素
+        current_row += ubAc_friction_cone.size();
+
+        // 构造约束矩阵
+        Ac.block(k*CONSTRAIN_DIM, k*CONTROL_DIM, CONSTRAIN_DIM, CONTROL_DIM) = Ac_k;
+        lbAc.segment(k*CONSTRAIN_DIM, CONSTRAIN_DIM) = lbAc_k;
+        ubAc.segment(k*CONSTRAIN_DIM, CONSTRAIN_DIM) = ubAc_k;
     }
 }
 
-bool codmpcSolver::qpOASESsolve(Eigen::VectorXd const &x0, 
+bool codmpcSolver::qpOASESsolve(Eigen::VectorXd const &x0, std::map<std::string,std::vector<double>> const &x0_map,
                                 std::vector<Eigen::VectorXd> const &x_ref,
                                 std::vector<Eigen::VectorXd> const &u_ref,
                                 std::string const &subsystems_name) {
@@ -665,14 +744,18 @@ bool codmpcSolver::qpOASESsolve(Eigen::VectorXd const &x0,
     int const &PREDICTION_HORIZON = solver_param_.N_;
     int const &STATE_DIM = solver_param_.n_state;
     int const &CONTROL_DIM = solver_param_.n_control;
+    int const CONSTRAIN_DIM = 16;
 
     // 计算H矩阵和g向量
     Eigen::MatrixXd H;
     Eigen::VectorXd g;
-    computeQPmatrices(subsystems_name, x0, x_ref, u_ref, H, g);
+    Eigen::MatrixXd Ac;
+    Eigen::VectorXd lbAc;
+    Eigen::VectorXd ubAc;
+    computeQPmatrices(subsystems_name, x0, x0_map, x_ref, u_ref, H, g, Ac, lbAc, ubAc);
     
     // 创建qpOASES问题
-    qpOASES::SQProblem qp(PREDICTION_HORIZON*CONTROL_DIM, 0);
+    qpOASES::SQProblem qp(PREDICTION_HORIZON*CONTROL_DIM, PREDICTION_HORIZON*CONSTRAIN_DIM);
     
     // 设置求解器选项
     qpOASES::Options options;
@@ -681,8 +764,8 @@ bool codmpcSolver::qpOASESsolve(Eigen::VectorXd const &x0,
     qp.setOptions(options);
     
     // 初始化问题
-    int nWSR = 1000;
-    qpOASES::returnValue status = qp.init(H.data(), g.data(), nullptr, nullptr, nullptr, nullptr, nullptr, nWSR);
+    int nWSR = 100;
+    qpOASES::returnValue status = qp.init(H.data(), g.data(), Ac.data(), nullptr, nullptr, lbAc.data(), ubAc.data(), nWSR);
     
     if (status == qpOASES::SUCCESSFUL_RETURN) {
         // 获取最优解
