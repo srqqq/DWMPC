@@ -56,6 +56,22 @@ class codmpcSolver {
         Eigen::DiagonalMatrix<double, Eigen::Dynamic> R_;
 
 #ifdef USE_QPOASES
+        // 权重对角矩阵
+        Eigen::DiagonalMatrix<double, Eigen::Dynamic> Q_total_;
+        Eigen::DiagonalMatrix<double, Eigen::Dynamic> R_total_;
+        Eigen::MatrixXd R_total_dense_;
+        // Eigen::MatrixXd Ac_friction_cone_;
+        // Eigen::VectorXd lbAc_friction_cone_;
+        // Eigen::VectorXd ubAc_friction_cone_;
+
+        // 约束
+        // VectorXd x_min, x_max;
+        // VectorXd u_min, u_max;
+
+        void buildTotalWeightMatrices();
+        void buildFMatrix(Eigen::MatrixXd &F, Eigen::MatrixXd const &A);
+        void buildPhiMatrix(Eigen::MatrixXd &Phi, Eigen::MatrixXd const &A, Eigen::MatrixXd const &B);
+        void qpOASESinit();
         void computeQPmatrices(std::string const &subsystems_name,
                                Eigen::VectorXd const &x0, std::map<std::string,std::vector<double>> const &x0_map,
                                std::vector<Eigen::VectorXd> const &x_ref,
@@ -73,7 +89,10 @@ class codmpcSolver {
         std::map<std::string, pdata> data_;
         std::map<std::string, std::vector<Eigen::VectorXd>> u_;
         std::map<std::string, Eigen::VectorXd> x0_;
+#ifdef USE_QPOASES
 
+        bool is_initialized{false};
+#endif
 #ifdef DEBUG_MODE
         RobotDataLogger logger_front_;
         RobotDataLogger logger_back_;
