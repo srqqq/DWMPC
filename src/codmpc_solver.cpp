@@ -730,15 +730,15 @@ void codmpcSolver::computeQPmatrices(std::string const &subsystems_name,
     }
         
     // 计算Hessian矩阵和梯度向量
-    H = Phi.transpose() * Q_total_ * Phi + R_total_dense_; //R_total.toDenseMatrix()也放在初始化中节省时间
-    g = Phi.transpose() * (Q_total_ * (F * x0 - X_ref)) - R_total_ * U_ref;
+    H = 2.0 * (Phi.transpose() * Q_total_ * Phi + R_total_dense_); //R_total.toDenseMatrix()也放在初始化中节省时间
+    g = 2.0 * (Phi.transpose() * (Q_total_ * (F * x0 - X_ref)) - R_total_ * U_ref);
   
     // constrain 1: foot noslip
     std::vector<double> const contact_cmd = x0_map.at("contact_cmd");
     Eigen::MatrixXd M_foot_vel = Eigen::MatrixXd::Zero(6*N, total_n);
     for (int k = 0; k < N; ++k) {
-        M_foot_vel.block(6*k,   n*k, 3, 12) = contact_cmd[s_idx]*quadruped_model_.J_linear_[s_idx];
-        M_foot_vel.block(6*k+3, n*k, 3, 12) = contact_cmd[s_idx+1]*quadruped_model_.J_linear_[s_idx+1];
+        M_foot_vel.block(6*k,   n*k+12, 3, 12) = contact_cmd[s_idx]*quadruped_model_.J_linear_[s_idx];
+        M_foot_vel.block(6*k+3, n*k+12, 3, 12) = contact_cmd[s_idx+1]*quadruped_model_.J_linear_[s_idx+1];
     }
     Eigen::VectorXd const vec_epsilon = 1e-3*Eigen::VectorXd::Ones(6*N);
     double const inf = std::numeric_limits<double>::infinity();
