@@ -373,11 +373,6 @@ void codmpcSolver::solve( bool &do_init,
             // sendSolverData(problem_ref, x0, data_["wb"].tau[0]);  
             // receiveSolverResult();
 #ifdef USE_QPOASES 
-            if(!is_initialized) {
-                qpOASESinit();
-                is_initialized = true;
-                std::cout << "qpOASES initialized!!!" << std::endl;
-            }
             bool success = qpOASESsolve(x0, x0_map, x_ref, u_ref, problem);
             if (!success) {
                 std::cout << "MPC求解失败！" << std::endl;
@@ -730,8 +725,9 @@ void codmpcSolver::computeQPmatrices(std::string const &subsystems_name,
     }
         
     // 计算Hessian矩阵和梯度向量
+    Eigen::MatrixXd Fx0 = F * x0;
     H = 2.0 * (Phi.transpose() * Q_total_ * Phi + R_total_dense_); //R_total.toDenseMatrix()也放在初始化中节省时间
-    g = 2.0 * (Phi.transpose() * (Q_total_ * (F * x0 - X_ref)) - R_total_ * U_ref);
+    g = 2.0 * (Phi.transpose() * (Q_total_ * (Fx0 - X_ref)) - R_total_ * U_ref);
   
     // constrain 1: foot noslip
     std::vector<double> const contact_cmd = x0_map.at("contact_cmd");
@@ -743,7 +739,7 @@ void codmpcSolver::computeQPmatrices(std::string const &subsystems_name,
     Eigen::VectorXd const vec_epsilon = 1e-3*Eigen::VectorXd::Ones(6*N);
     double const inf = std::numeric_limits<double>::infinity();
     Eigen::MatrixXd Ac_foot_noslip = M_foot_vel*Phi;
-    Eigen::VectorXd vec_foot_vel = M_foot_vel*F*x0;
+    Eigen::VectorXd vec_foot_vel = M_foot_vel*Fx0;
     Eigen::VectorXd lbAc_foot_noslip = -vec_epsilon - vec_foot_vel;
     Eigen::VectorXd ubAc_foot_noslip = vec_epsilon - vec_foot_vel;
 
@@ -761,6 +757,12 @@ bool codmpcSolver::qpOASESsolve(Eigen::VectorXd const &x0, std::map<std::string,
                                 std::vector<Eigen::VectorXd> const &x_ref,
                                 std::vector<Eigen::VectorXd> const &u_ref,
                                 std::string const &subsystems_name) {
+  
+    if(!is_initialized) {
+        qpOASESinit();
+        is_initialized = true;
+        std::cout << "qpOASES initialized!!!" << std::endl;
+    }
   
     // 参数设置
     int const &N = solver_param_.N_;
