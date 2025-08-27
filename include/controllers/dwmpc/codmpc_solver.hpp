@@ -89,6 +89,8 @@ class codmpcSolver {
         std::map<std::string, pdata> data_;
         std::map<std::string, std::vector<Eigen::VectorXd>> u_;
         std::map<std::string, Eigen::VectorXd> x0_;
+        int total_constrain_;
+
 #ifdef USE_QPOASES
 
         bool is_initialized{false};
