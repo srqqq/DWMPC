@@ -733,36 +733,36 @@ void codmpcSolver::computeQPmatrices(std::string const &subsystems_name,
 
     // constrain 1: foot noslip
     std::vector<double> const contact_cmd = x0_map.at("contact_cmd");
-    int n_foot_noslip_constrain = 0;
+    int n_contact_foot = 0;
     int index = 0;
     for(int i=0; i<2; ++i) {
         if(contact_cmd[s_idx+i] == 1) {//触地则约束+1
-            ++n_foot_noslip_constrain;
+            ++n_contact_foot;
             index = s_idx+i;
         }
     }
 
     Eigen::MatrixXd J_matrix;
-    if (n_foot_noslip_constrain == 0) {
-        total_constrain_ = n_foot_noslip_constrain;
+    if (n_contact_foot == 0) {
+        total_constrain_ = n_contact_foot;
         return;
-    } else if (n_foot_noslip_constrain == 2) {
+    } else if (n_contact_foot == 2) {
         J_matrix = Eigen::MatrixXd::Zero(6, 12);
         J_matrix.block(0, 0, 3, 12) = quadruped_model_.J_linear_[s_idx];
         J_matrix.block(3, 0, 3, 12) = quadruped_model_.J_linear_[s_idx+1];
-    } else { // n_foot_noslip_constrain==1
+    } else { // n_contact_foot==1
         J_matrix = Eigen::MatrixXd::Zero(3, 12);
         J_matrix.block(0, 0, 3, 12) = quadruped_model_.J_linear_[index];
     }
   
-    // std::cout <<"n_foot_noslip_constrain : " <<n_foot_noslip_constrain<<", J_matrix : " << J_matrix.rows() << "x" << J_matrix.cols()<<std::endl;
+    // std::cout <<"n_contact_foot : " <<n_contact_foot<<", J_matrix : " << J_matrix.rows() << "x" << J_matrix.cols()<<std::endl;
 
-    int n_foot_vel = n_foot_noslip_constrain*3;
-    Eigen::MatrixXd M_foot_vel = Eigen::MatrixXd::Zero(n_foot_vel*N, total_n);
+    int n_foot_vel_constrain = n_contact_foot*3;
+    Eigen::MatrixXd M_foot_vel = Eigen::MatrixXd::Zero(n_foot_vel_constrain*N, total_n);
     for (int k = 0; k < N; ++k) {
-        M_foot_vel.block(n_foot_vel*k, n*k+12, n_foot_vel, 12) = J_matrix;
+        M_foot_vel.block(n_foot_vel_constrain*k, n*k+12, n_foot_vel_constrain, 12) = J_matrix;
     }
-    Eigen::VectorXd const vec_epsilon = 1e-3*Eigen::VectorXd::Ones(n_foot_vel*N);
+    Eigen::VectorXd const vec_epsilon = 1e-3*Eigen::VectorXd::Ones(n_foot_vel_constrain*N);
     double const inf = std::numeric_limits<double>::infinity();
     Eigen::MatrixXd Ac_foot_noslip = M_foot_vel*Phi;
     Eigen::VectorXd vec_foot_vel = M_foot_vel*Fx0;
@@ -772,7 +772,7 @@ void codmpcSolver::computeQPmatrices(std::string const &subsystems_name,
     // constrain 2: friction cone（有问题，暂时不用，后面可能会加到输入约束中）
     // 已在初始化函数中计算
 
-    total_constrain_ = n_foot_noslip_constrain;
+    total_constrain_ = n_foot_vel_constrain;
     Ac = Ac_foot_noslip;
     lbAc = lbAc_foot_noslip;
     ubAc = ubAc_foot_noslip;
