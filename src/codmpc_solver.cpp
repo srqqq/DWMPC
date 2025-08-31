@@ -642,6 +642,7 @@ void codmpcSolver::buildPhiMatrix(Eigen::MatrixXd &Phi, Eigen::MatrixXd const &A
 
 void codmpcSolver::qpOASESinit() {
 
+    // int const &N = solver_param_.N_;
     // int const &n = solver_param_.n_state;
     // int const &m = solver_param_.n_control;
 
@@ -649,34 +650,38 @@ void codmpcSolver::qpOASESinit() {
     buildTotalWeightMatrices();
 
     // 提前设置输入约束
+    // constrain 1: friction cone
+    // n_friction_cone_constrain_ = 10;
     // double const mu = 0.5;
     // double const fz_max = 500;
-    // Eigen::MatrixXd M_friction(5, 3);
-    // M_friction << 1,  0, -mu,
-    //              -1,  0, -mu,
-    //               0,  1, -mu,
-    //               0, -1, -mu,
-    //               0,  0,  1;  
-    // Ac_friction_cone_block = = Eigen::MatrixXd::Zero(10, m);
-    // Ac_friction_cone_block.block(0, 6, 5, 3) = M_friction;
-    // Ac_friction_cone_block.block(5, 9, 5, 3) = M_friction;
-    // Ac_friction_cone_ = Eigen::MatrixXd::Zero(10*N, m*N);
+    // Eigen::MatrixXd friction_matrix(5, 3);
+    // friction_matrix << 1,  0, mu,
+    //                   -1,  0, mu,
+    //                    0,  1, mu,
+    //                    0, -1, mu,
+    //                    0,  0,  1;  
+    // Eigen::MatrixXd friction_matrix_total = Eigen::MatrixXd::Zero(n_friction_cone_constrain_, m);
+    // friction_matrix_total.block(0, 6, 5, 3) = friction_matrix;
+    // friction_matrix_total.block(5, 9, 5, 3) = friction_matrix;
+    // Ac_friction_cone_ = Eigen::MatrixXd::Zero(n_friction_cone_constrain_*N, m*N);
     // for (int k = 0; k < N; ++k) { 
-    //     Ac_friction_cone_.block(k*10, k*m, 10, m) = Ac_friction_cone_block;
+    //     Ac_friction_cone_.block(k*n_friction_cone_constrain_, k*m, n_friction_cone_constrain_, m) = friction_matrix_total;
     // }
-
-    // Eigen::VectorXd lbAc_friction_cone_segment(10);
-    // Eigen::VectorXd ubAc_friction_cone_segment(10);
+    // Eigen::VectorXd vec_friction_min(n_friction_cone_constrain_);
+    // // Eigen::VectorXd vec_friction_max(n_friction_cone_constrain_);
     // double const inf = std::numeric_limits<double>::infinity();
-    // lbAc_friction_cone_segment << inf, inf, inf, inf, 0,
-    //                               inf, inf, inf, inf, 0;
-    // ubAc_friction_cone_segment << 0, 0, 0, 0, fz_max,
-    //                               0, 0, 0, 0, fz_max;
-    // for (int k = 0; k < N; ++k) { 
-    //     lbAc_friction_cone_.segment(k*10, 10) = lbAc_friction_cone_segment;
-    //     ubAc_friction_cone_.segment(k*10, 10) = ubAc_friction_cone_segment;
-    // }
+    // vec_friction_min  << 0, 0, 0, 0, 0,
+    //                      0, 0, 0, 0, 0;
+    // vec_friction_max_ = Eigen::VectorXd::Zero(n_friction_cone_constrain_);
+    // vec_friction_max_ << fz_max, fz_max, fz_max, fz_max, fz_max,
+    //                      fz_max, fz_max, fz_max, fz_max, fz_max;
 
+    // lbAc_friction_cone_ = Eigen::VectorXd::Zero(n_friction_cone_constrain_*N);
+    // ubAc_friction_cone_ = Eigen::VectorXd::Zero(n_friction_cone_constrain_*N);
+    // for (int k = 0; k < N; ++k) { 
+    //     lbAc_friction_cone_.segment(k*n_friction_cone_constrain_, n_friction_cone_constrain_) = vec_friction_min;
+    //     ubAc_friction_cone_.segment(k*n_friction_cone_constrain_, n_friction_cone_constrain_) = vec_friction_max_;
+    // }
     return;
 }
 
@@ -729,53 +734,148 @@ void codmpcSolver::computeQPmatrices(std::string const &subsystems_name,
     g = 2.0 * (Phi.transpose() * (Q_total_ * (Fx0 - X_ref)) - R_total_ * U_ref);
   
     // 构造约束
-    total_constrain_ = 0;
+    constrains_ = 0;
 
-    // constrain 1: foot noslip
+    // constrain 1: friction cone
+    double const mu = 0.5;
+    double const fz_max = 500;
+    double const fz_min = 0;
     std::vector<double> const contact_cmd = x0_map.at("contact_cmd");
-    int n_contact_foot = 0;
+    int n_contact_cmd = 0;
     int index = 0;
     for(int i=0; i<2; ++i) {
         if(contact_cmd[s_idx+i] == 1) {//触地则约束+1
-            ++n_contact_foot;
-            index = s_idx+i;
+            ++n_contact_cmd;
+            index = i;
         }
     }
 
-    Eigen::MatrixXd J_matrix;
-    if (n_contact_foot == 0) {
-        total_constrain_ = n_contact_foot;
+    if (n_contact_cmd == 0) { //只有摩擦锥约束
+        std::cout << " !!! n_contact_cmd == 0, no constrans !!!" << std::endl;
         return;
-    } else if (n_contact_foot == 2) {
+    }
+
+    int n_friction_cone_constrain = n_contact_cmd*5;
+    constrains_ += n_friction_cone_constrain;
+    Eigen::MatrixXd friction_matrix_block(5, 3);
+    friction_matrix_block << 1,  0, mu,
+                            -1,  0, mu,
+                             0,  1, mu,
+                             0, -1, mu,
+                             0,  0, 1;
+
+    Eigen::MatrixXd friction_matrix;
+    Eigen::VectorXd vec_friction_min(n_friction_cone_constrain);
+    Eigen::VectorXd vec_friction_max(n_friction_cone_constrain);
+    if (n_contact_cmd == 2) {
+        friction_matrix = Eigen::MatrixXd::Zero(10, m);
+        friction_matrix.block(0, 6, 5, 3) = friction_matrix_block;
+        friction_matrix.block(5, 9, 5, 3) = friction_matrix_block;
+        vec_friction_min << 0, 0, 0, 0, fz_min,
+                            0, 0, 0, 0, fz_min;
+        vec_friction_max << fz_max, fz_max, fz_max, fz_max, fz_max,
+                            fz_max, fz_max, fz_max, fz_max, fz_max;
+    } else { // n_contact_cmd==1
+        friction_matrix = Eigen::MatrixXd::Zero(5, m);
+        friction_matrix.block(0, 6+index*3, 5, 3) = friction_matrix_block;
+        vec_friction_min << 0, 0, 0, 0, fz_min;
+        vec_friction_max << fz_max, fz_max, fz_max, fz_max, fz_max;   
+    }
+
+    Eigen::MatrixXd Ac_friction_cone = Eigen::MatrixXd::Zero(n_friction_cone_constrain*N, m*N);
+    Eigen::VectorXd lbAc_friction_cone = Eigen::VectorXd::Zero(n_friction_cone_constrain*N);
+    Eigen::VectorXd ubAc_friction_cone = Eigen::VectorXd::Zero(n_friction_cone_constrain*N);
+    for (int k = 0; k < N; ++k) { 
+        Ac_friction_cone.block(k*n_friction_cone_constrain, k*m, n_friction_cone_constrain, m) = friction_matrix;
+        lbAc_friction_cone.segment(k*n_friction_cone_constrain, n_friction_cone_constrain) = vec_friction_min;
+        ubAc_friction_cone.segment(k*n_friction_cone_constrain, n_friction_cone_constrain) = vec_friction_max;
+    }
+
+    // constrain 2: foot noslip
+    double const epsilon = 1e-6;
+
+    int n_noslip_constrain = n_contact_cmd*3;
+    constrains_ += n_noslip_constrain;
+
+    Eigen::MatrixXd J_matrix;
+    if (n_contact_cmd == 2) {
         J_matrix = Eigen::MatrixXd::Zero(6, 12);
         J_matrix.block(0, 0, 3, 12) = quadruped_model_.J_linear_[s_idx];
         J_matrix.block(3, 0, 3, 12) = quadruped_model_.J_linear_[s_idx+1];
-    } else { // n_contact_foot==1
+    } else { // n_contact_cmd==1
         J_matrix = Eigen::MatrixXd::Zero(3, 12);
-        J_matrix.block(0, 0, 3, 12) = quadruped_model_.J_linear_[index];
+        J_matrix.block(0, 0, 3, 12) = quadruped_model_.J_linear_[s_idx+index];
     }
-  
-    // std::cout <<"n_contact_foot : " <<n_contact_foot<<", J_matrix : " << J_matrix.rows() << "x" << J_matrix.cols()<<std::endl;
 
-    int n_foot_vel_constrain = n_contact_foot*3;
-    Eigen::MatrixXd M_foot_vel = Eigen::MatrixXd::Zero(n_foot_vel_constrain*N, total_n);
+    Eigen::MatrixXd J_select = Eigen::MatrixXd::Zero(n_noslip_constrain*N, total_n);
     for (int k = 0; k < N; ++k) {
-        M_foot_vel.block(n_foot_vel_constrain*k, n*k+12, n_foot_vel_constrain, 12) = J_matrix;
+        J_select.block(n_noslip_constrain*k, n*k+12, n_noslip_constrain, 12) = J_matrix;
     }
-    Eigen::VectorXd const vec_epsilon = 1e-3*Eigen::VectorXd::Ones(n_foot_vel_constrain*N);
+    Eigen::VectorXd const vec_foot_vel_max = epsilon*Eigen::VectorXd::Ones(n_noslip_constrain*N);
     double const inf = std::numeric_limits<double>::infinity();
-    Eigen::MatrixXd Ac_foot_noslip = M_foot_vel*Phi;
-    Eigen::VectorXd vec_foot_vel = M_foot_vel*Fx0;
-    Eigen::VectorXd lbAc_foot_noslip = -vec_epsilon - vec_foot_vel;
-    Eigen::VectorXd ubAc_foot_noslip = vec_epsilon - vec_foot_vel;
+    Eigen::MatrixXd Ac_noslip = J_select*Phi;
+    Eigen::VectorXd vec_foot_vel = J_select*Fx0;
+    Eigen::VectorXd lbAc_noslip = -vec_foot_vel_max - vec_foot_vel;
+    Eigen::VectorXd ubAc_noslip = vec_foot_vel_max - vec_foot_vel;
 
-    // constrain 2: friction cone（有问题，暂时不用，后面可能会加到输入约束中）
-    // 已在初始化函数中计算
+    // 依次填充子矩阵到对应位置
+    Ac = Eigen::MatrixXd::Zero(constrains_*N, m*N);
+    lbAc = Eigen::VectorXd::Zero(constrains_*N);
+    ubAc = Eigen::VectorXd::Zero(constrains_*N);
 
-    total_constrain_ = n_foot_vel_constrain;
-    Ac = Ac_foot_noslip;
-    lbAc = lbAc_foot_noslip;
-    ubAc = ubAc_foot_noslip;
+    // std::cout << "Ac : " << Ac.rows() << "x" << Ac.cols() << std::endl;
+    // std::cout << "Ac_friction_cone : " << Ac_friction_cone.rows() << "x" << Ac_friction_cone.cols() << std::endl;
+    // std::cout << "Ac_noslip : " << Ac_noslip.rows() << "x" << Ac_noslip.cols() << std::endl;
+
+    for (int k = 0; k < N; ++k) {
+        Ac.block(k*constrains_, k*m, n_friction_cone_constrain, m) = Ac_friction_cone.block(k*n_friction_cone_constrain, k*m, n_friction_cone_constrain, m);
+        Ac.block(k*constrains_+n_friction_cone_constrain, k*m, n_noslip_constrain, m) = Ac_noslip.block(k*n_noslip_constrain, k*m, n_noslip_constrain, m);
+
+        lbAc.segment(k*constrains_, n_friction_cone_constrain) = lbAc_friction_cone.segment(k*n_friction_cone_constrain, n_friction_cone_constrain);  // 从索引0开始，填充a的2个元素
+        lbAc.segment(k*constrains_+n_friction_cone_constrain, n_noslip_constrain) = lbAc_noslip.segment(k*n_noslip_constrain, n_noslip_constrain);  // 从索引0开始，填充a的2个元素
+
+        ubAc.segment(k*constrains_, n_friction_cone_constrain) = ubAc_friction_cone.segment(k*n_friction_cone_constrain, n_friction_cone_constrain);  // 从索引0开始，填充a的2个元素
+        ubAc.segment(k*constrains_+n_friction_cone_constrain, n_noslip_constrain) = ubAc_noslip.segment(k*n_noslip_constrain, n_noslip_constrain);  // 从索引0开始，填充a的2个元素
+    }
+
+    // Ac.block(0, 0, n_friction_cone_constrain*N, m*N) = Ac_friction_cone;
+    // Ac.block(n_friction_cone_constrain*N, 0, n_noslip_constrain*N, m*N) = Ac_noslip;
+    // lbAc.segment(0, n_friction_cone_constrain*N) = lbAc_friction_cone;  // 从索引0开始，填充a的2个元素
+    // lbAc.segment(n_friction_cone_constrain*N, n_noslip_constrain*N) = lbAc_noslip;  // 从索引2开始，填充b的3个元素
+    // ubAc.segment(0, n_friction_cone_constrain*N) = ubAc_friction_cone;  // 从索引0开始，填充a的2个元素
+    // ubAc.segment(n_friction_cone_constrain*N, n_noslip_constrain*N) = ubAc_noslip;  // 从索引2开始，填充b的3个元素
+
+    // ~~~~~ 问题排查 ~~~~~ 
+    // std::cout << "Ac : " << Ac.rows() << "x" << Ac.cols() << std::endl;
+    // std::cout << "lbAc : " << lbAc.size() << std::endl;
+    // std::cout << "ubAc : " << ubAc.size() << std::endl;
+    // std::cout << "constrains_ : " << constrains_ 
+    // << ", n_friction_cone_constrain : " << n_friction_cone_constrain 
+    // << ", n_noslip_constrain : " << n_noslip_constrain << std::endl;
+
+    // Eigen::MatrixXd Ac_k = Ac.block(0, 0, constrains_, m);
+    // Eigen::VectorXd lbAc_k = lbAc.segment(0, constrains_);
+    // Eigen::VectorXd ubAc_k = ubAc.segment(0, constrains_);
+
+    // std::cout << "Ac_k : " << ubAc.size() << std::endl;
+    // debug_print(Ac_k);
+    // std::cout << "lbAc_k : " << ubAc.size() << std::endl;
+    // debug_print(lbAc_k);
+    // std::cout << "ubAc_k : " << ubAc.size() << std::endl;
+    // debug_print(ubAc_k);
+
+    // // 1.最直接原因：变量上下界矛盾（lb > ub）
+    // Eigen::VectorXd err_vec = ubAc-lbAc;
+    // int n_small0 = 0;
+    // // 判断c的各个元素是否大于0：转换为Array后逐元素比较
+    // for(int i=0; i<err_vec.size(); ++i) {
+    //     if(err_vec(i) < 0) {
+    //         ++n_small0;
+    //     }
+    // }
+    // if(n_small0 > 0) {
+    //     std::cout << " ********** 1. n_small0 is : " << n_small0 << std::endl;
+    // }  
 
     return;
 }
@@ -806,17 +906,18 @@ bool codmpcSolver::qpOASESsolve(Eigen::VectorXd const &x0, std::map<std::string,
     computeQPmatrices(subsystems_name, x0, x0_map, x_ref, u_ref, H, g, Ac, lbAc, ubAc);
     
     // 创建qpOASES问题
-    qpOASES::SQProblem qp(N*m, N*total_constrain_);
+    qpOASES::SQProblem qp(N*m, N*constrains_);
     // qpOASES::SQProblem qp(N*m, 0);
     
     // 设置求解器选项
     qpOASES::Options options;
     options.setToMPC();
     options.printLevel = qpOASES::PL_NONE;
+    // options.printLevel = qpOASES::PL_DEBUG_ITER;
     qp.setOptions(options);
     
     // 初始化问题
-    int nWSR = 100;
+    int nWSR = 1000;
     qpOASES::returnValue status = qp.init(H.data(), g.data(), Ac.data(), nullptr, nullptr, lbAc.data(), ubAc.data(), nWSR);
     // qpOASES::returnValue status = qp.init(H.data(), g.data(), nullptr, nullptr, nullptr, nullptr, nullptr, nWSR);
     

@@ -60,14 +60,7 @@ class codmpcSolver {
         Eigen::DiagonalMatrix<double, Eigen::Dynamic> Q_total_;
         Eigen::DiagonalMatrix<double, Eigen::Dynamic> R_total_;
         Eigen::MatrixXd R_total_dense_;
-        // Eigen::MatrixXd Ac_friction_cone_;
-        // Eigen::VectorXd lbAc_friction_cone_;
-        // Eigen::VectorXd ubAc_friction_cone_;
-
-        // 约束
-        // VectorXd x_min, x_max;
-        // VectorXd u_min, u_max;
-
+        
         void buildTotalWeightMatrices();
         void buildFMatrix(Eigen::MatrixXd &F, Eigen::MatrixXd const &A);
         void buildPhiMatrix(Eigen::MatrixXd &Phi, Eigen::MatrixXd const &A, Eigen::MatrixXd const &B);
@@ -89,7 +82,7 @@ class codmpcSolver {
         std::map<std::string, pdata> data_;
         std::map<std::string, std::vector<Eigen::VectorXd>> u_;
         std::map<std::string, Eigen::VectorXd> x0_;
-        int total_constrain_;
+        int constrains_;
 
 #ifdef USE_QPOASES
 
