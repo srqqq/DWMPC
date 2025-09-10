@@ -918,7 +918,10 @@ bool codmpcSolver::qpOASESsolve(Eigen::VectorXd const &x0, std::map<std::string,
     
     // 初始化问题
     int nWSR = 1000;
-    qpOASES::returnValue status = qp.init(H.data(), g.data(), Ac.data(), nullptr, nullptr, lbAc.data(), ubAc.data(), nWSR);
+    Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> H_R = H; // qpOASES接收的矩阵为行向量！！！
+    Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> Ac_R = Ac;
+    qpOASES::returnValue status = qp.init(H_R.data(), g.data(), Ac_R.data(), nullptr, nullptr, lbAc.data(), ubAc.data(), nWSR);
+    // qpOASES::returnValue status = qp.init(H.data(), g.data(), Ac.data(), nullptr, nullptr, lbAc.data(), ubAc.data(), nWSR);
     // qpOASES::returnValue status = qp.init(H.data(), g.data(), nullptr, nullptr, nullptr, nullptr, nullptr, nWSR);
     
     if (status == qpOASES::SUCCESSFUL_RETURN) {
