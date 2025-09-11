@@ -271,7 +271,7 @@ void codmpcSolver::solve( bool &do_init,
 
                 // set grf //这里和原代码不同，我们只优化grf而不是grf_wb，因此只给当前子系统赋值即可
                 counter=0;
-                for(auto idx : solver_param_.subsystems_map_contact[problem]) //循环3*2=6次
+                for(auto idx : solver_param_.subsystems_map_contact["wb"]) //循环3*2=6次
                 {
                     u_ref_k(6+counter) = ref.at("grf")[k][3*idx];
                     u_ref_k(7+counter) = ref.at("grf")[k][3*idx+1];
@@ -360,7 +360,7 @@ void codmpcSolver::solve( bool &do_init,
 
                     // weight grf grf_aux
                     counter = 0;
-                    for(auto idx : solver_param_.subsystems_map_contact[problem])
+                    for(auto idx : solver_param_.subsystems_map_contact["wb"])
                     {
                         R_.diagonal()[6+counter] = weight_vec.at("grf")[0];
                         R_.diagonal()[7+counter] = weight_vec.at("grf")[0];                            
@@ -395,6 +395,7 @@ void codmpcSolver::solve( bool &do_init,
             // update state from solution
             std::vector<Eigen::VectorXd> x = quadruped_model_.updatePrediction(x0_[problem], u_[problem], problem);
             int n_joints {solver_param_.subsystems_map_joint[problem].size()}; //6
+            int n_contact {solver_param_.subsystems_map_contact[problem].size()}; //2
             int counter = 0;
             //update data state
             for (int k{0};k<solver_param_.N_+1;k++)
@@ -468,10 +469,17 @@ void codmpcSolver::solve( bool &do_init,
                     counter = 0;
                     for(auto idx : solver_param_.subsystems_map_contact[problem])
                     {
-                        data_["wb"].grf[k][3*idx] = u_[problem][k](n_joints+3*counter);
-                        data_["wb"].grf[k][3*idx+1] = u_[problem][k](n_joints+3*counter+1);
-                        data_["wb"].grf[k][3*idx+2] = u_[problem][k](n_joints+3*counter+2);
-                        counter++;
+                        if (problem == "front") {
+                            data_["wb"].grf[k][3*idx] = u_[problem][k](n_joints+3*counter);
+                            data_["wb"].grf[k][3*idx+1] = u_[problem][k](n_joints+3*counter+1);
+                            data_["wb"].grf[k][3*idx+2] = u_[problem][k](n_joints+3*counter+2);
+                            counter++;
+                        } else {
+                            data_["wb"].grf[k][3*idx] = u_[problem][k](n_joints+3*n_contact+3*counter);
+                            data_["wb"].grf[k][3*idx+1] = u_[problem][k](n_joints+3*n_contact+3*counter+1);
+                            data_["wb"].grf[k][3*idx+2] = u_[problem][k](n_joints+3*n_contact+3*counter+2);
+                            counter++;
+                        }
                     }
                 }       
             }
@@ -706,6 +714,7 @@ void codmpcSolver::computeQPmatrices(std::string const &subsystems_name,
     int const &N = solver_param_.N_;
     int const &n = solver_param_.n_state;
     int const &m = solver_param_.n_control;
+    int const &n_contact_wb = solver_param_.n_contact_wb;
     int const total_n = n * N;
     int const total_m = m * N;
 
@@ -741,8 +750,7 @@ void codmpcSolver::computeQPmatrices(std::string const &subsystems_name,
     double const fz_max = 500;
     double const fz_min = 0;
     std::vector<double> const contact_cmd = x0_map.at("contact_cmd");
-
-    int n_friction_cone_constrain = 2*5;
+    int n_friction_cone_constrain = 4*5;
     constrains_ += n_friction_cone_constrain;
     Eigen::MatrixXd friction_matrix_block(5, 3);
     friction_matrix_block << 1,  0, mu,
@@ -751,15 +759,20 @@ void codmpcSolver::computeQPmatrices(std::string const &subsystems_name,
                              0, -1, mu,
                              0,  0, 1;
 
-    Eigen::MatrixXd friction_matrix;
+    Eigen::MatrixXd friction_matrix = Eigen::MatrixXd::Zero(n_friction_cone_constrain, m);
+    for (int i=0; i<n_contact_wb; ++i) {
+        friction_matrix.block(0+5*i, 6+3*i, 5, 3) = friction_matrix_block;
+    }
+
     Eigen::VectorXd vec_friction_min(n_friction_cone_constrain);
     Eigen::VectorXd vec_friction_max(n_friction_cone_constrain);
-    friction_matrix = Eigen::MatrixXd::Zero(10, m);
-    friction_matrix.block(0, 6, 5, 3) = friction_matrix_block;
-    friction_matrix.block(5, 9, 5, 3) = friction_matrix_block;
     vec_friction_min << 0, 0, 0, 0, fz_min,
+                        0, 0, 0, 0, fz_min,
+                        0, 0, 0, 0, fz_min,
                         0, 0, 0, 0, fz_min;
     vec_friction_max << fz_max, fz_max, fz_max, fz_max, fz_max,
+                        fz_max, fz_max, fz_max, fz_max, fz_max,
+                        fz_max, fz_max, fz_max, fz_max, fz_max,
                         fz_max, fz_max, fz_max, fz_max, fz_max;
 
     Eigen::MatrixXd Ac_friction_cone = Eigen::MatrixXd::Zero(n_friction_cone_constrain*N, m*N);
@@ -795,10 +808,6 @@ void codmpcSolver::computeQPmatrices(std::string const &subsystems_name,
     Ac = Eigen::MatrixXd::Zero(constrains_*N, m*N);
     lbAc = Eigen::VectorXd::Zero(constrains_*N);
     ubAc = Eigen::VectorXd::Zero(constrains_*N);
-
-    // std::cout << "Ac : " << Ac.rows() << "x" << Ac.cols() << std::endl;
-    // std::cout << "Ac_friction_cone : " << Ac_friction_cone.rows() << "x" << Ac_friction_cone.cols() << std::endl;
-    // std::cout << "Ac_noslip : " << Ac_noslip.rows() << "x" << Ac_noslip.cols() << std::endl;
 
     // 方法1构造约束矩阵，更直观
     // for (int k = 0; k < N; ++k) {

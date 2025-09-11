@@ -3,7 +3,7 @@ n_joint_wb : 12
 n_contact_wb : 4
 n_legs : 4
 n_state : 37   # half robot
-n_control : 12  # half robot
+n_control : 18  # half robot
 
 # GO2 and GO1 parameters
 q0 : [0, 0.9, -1.8, 0, 0.9, -1.8, 0, 0.9, -1.8, 0, 0.9, -1.8]

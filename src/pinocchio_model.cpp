@@ -135,8 +135,8 @@ void quadrupedModel::updateSubsystem(std::string const &subsystems_name, Eigen::
     //     }
     // }
 
-    // 计算矩阵 S (12x12)
-    Eigen::MatrixXd S = Eigen::MatrixXd::Zero(6 + n_joint, n_joint + 3*n_contact);
+    // 计算矩阵 S (12x18)
+    Eigen::MatrixXd S;
     createSelectMatrix(subsystems_name, x0_map, S);
 
     //计算矩阵参数
@@ -174,9 +174,9 @@ void quadrupedModel::updateSubsystem(std::string const &subsystems_name, Eigen::
     Ak_[subsystems_name].block(30, 36, 6, 1) = delta.segment(0, 6)*dt;
     Ak_[subsystems_name](36,36) = 1.0;
 
-    Eigen::MatrixXd B_temp = inv_M*S;
-    Bk_[subsystems_name].block(12, 0, 12, 12) = B_temp*dt;
-    Bk_[subsystems_name].block(30, 0, 6, 12) = B_temp.block(0, 0, 6, 12)*dt;
+    Eigen::MatrixXd B_temp = inv_M*S; //12*18
+    Bk_[subsystems_name].block(12, 0, 12, 18) = B_temp*dt;
+    Bk_[subsystems_name].block(30, 0, 6, 18) = B_temp.block(0, 0, 6, 18)*dt;
 
     return;
 }
@@ -218,16 +218,32 @@ void quadrupedModel::createSelectMatrix(std::string const &subsystems_name, std:
     }
     
     int const &n_joint = model_param_.n_joint;
-    int const &n_contact = model_param_.n_contact;
+    int const &n_contact_wb = model_param_.n_contact_wb;
+
+    S = Eigen::MatrixXd::Zero(6 + n_joint, 6 + 3*n_contact_wb);
     
     // 设置 S 中与 tau 对应的部分 (后6行，前6列)
     S.block(n_joint, 0, n_joint, n_joint) = Eigen::MatrixXd::Identity(n_joint, n_joint);
-    
     std::vector<double> contact_cmd = x0_map.at("contact_cmd");
-    // 只算前半部分grf
-    for (int idx = 0; idx < n_contact; ++idx) { 
-        Eigen::MatrixXd J_T = J_linear_[s_idx+idx].transpose();
-        S.block(0, n_joint+3*idx, 6+n_joint, 3) =  contact_cmd[s_idx+idx] * J_T;
+    if (s_idx == 0) {
+        for (int idx = 0; idx < 2; ++idx) { 
+            Eigen::MatrixXd J_T = J_linear_[idx].transpose();
+            S.block(0, 6+3*idx, 12, 3) = contact_cmd[idx] * J_T;
+        }
+        for (int idx = 2; idx < 4; ++idx) { 
+            Eigen::MatrixXd J_T = J_linear_[idx].transpose();
+            S.block(0, 6+3*idx, 6, 3) = (contact_cmd[idx] * J_T).topRows(6);
+        }
+
+    } else {
+        for (int idx = 2; idx < 4; ++idx) { 
+            Eigen::MatrixXd J_T = J_linear_[idx].transpose();
+            S.block(0, 6+3*idx, 12, 3) = contact_cmd[idx] * J_T;
+        }
+        for (int idx = 0; idx < 2; ++idx) { 
+            Eigen::MatrixXd J_T = J_linear_[idx].transpose();
+            S.block(0, 6+3*idx, 6, 3) = (contact_cmd[idx] * J_T).topRows(6);
+        }
     }
 
     return;
