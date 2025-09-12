@@ -48,6 +48,7 @@ class quadrupedModel {
     std::map<std::string, Eigen::MatrixXd> Ak_;
     std::map<std::string, Eigen::MatrixXd> Bk_;
     std::vector<Eigen::MatrixXd> J_linear_; //子系统足端线速度雅可比矩阵
+    std::vector<double> grf_old_wb_; //上次足端力的优化结果
 
     private:
     void updateSubsystem(std::string const &subsystems_name, Eigen::MatrixXd const &M_wb, 

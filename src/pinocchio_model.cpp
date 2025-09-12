@@ -19,6 +19,8 @@ void quadrupedModel::modelInit(parameter const &model_param) {
 
     J_linear_.resize(model_param_.n_contact_wb);
 
+    grf_old_wb_.resize(model_param_.n_contact_wb*3);
+
     // 设置文件路径
     std::string urdf_filename{"/usr/include/dls2/controllers/dwmpc/urdf/go2.urdf"};
 
@@ -125,26 +127,32 @@ void quadrupedModel::updateSubsystem(std::string const &subsystems_name, Eigen::
     nle.segment(0, 6) = nle_wb.segment(0, 6);
     nle.segment(6, 6) = nle_wb.segment(6+3*s_idx, n_joint);
 
-    // //计算外部力矩，注意是关节力矩不是足端力
-    // Eigen::VectorXd ext_torque = Eigen::VectorXd::Zero(6+n_joint);
-    // Eigen::VectorXd grf = Eigen::Map<const Eigen::VectorXd>(x0_map.at("grf").data(), x0_map.at("grf").size());
-    // for(int idx = 0; idx < model_param_.n_contact_wb; ++idx) {
-    //     if ((idx == s_idx) || (idx == (n_contact-1)+s_idx)) {
-    //         Eigen::VectorXd torque_wb = x0_map.at("contact")[idx]*J_linear_wb_[idx].transpose()*grf.segment(3*idx, 3);
-    //         ext_torque.segment(0, 6) += torque_wb.segment(0, 6);
-    //         ext_torque.segment(6, 6) += torque_wb.segment(6+3*s_idx, n_joint);
-    //     } else {
-    //         ext_torque.segment(0, 6) += (x0_map.at("contact")[idx]*J_linear_wb_[idx].transpose()*grf.segment(3*idx, 3)).segment(0, 6);
-    //     }
-    // }
-
     // 计算矩阵 S (12x18)
     Eigen::MatrixXd S;
     createSelectMatrix(subsystems_name, x0_map, S);
 
     //计算矩阵参数
     Eigen::MatrixXd inv_M = M.inverse();
-    Eigen::VectorXd delta = inv_M*(-nle);
+
+    Eigen::VectorXd grf_old_wb = Eigen::VectorXd::Map(grf_old_wb_.data(), grf_old_wb_.size());
+    Eigen::VectorXd ext_torque_old = Eigen::VectorXd::Zero(6+model_param_.n_joint);
+    std::vector<double> contact_cmd = x0_map.at("contact_cmd");
+    if(s_idx == 0) { //对于前半部分，只保留后半部分的grf_old
+        for(int i=0; i<n_contact; ++i) { 
+            Eigen::VectorXd grf_old = grf_old_wb.segment(6+i*3, 3);
+            Eigen::VectorXd trq_temp = contact_cmd[2+i]*J_linear_[2+i].transpose()*grf_old;
+            ext_torque_old.segment(0, 6) += trq_temp.segment(0, 6);
+        }
+    } else {
+        for(int i=0; i<n_contact; ++i) { 
+            Eigen::VectorXd grf_old = grf_old_wb.segment(0+i*3, 3);
+            Eigen::VectorXd trq_temp = contact_cmd[i]*J_linear_[i].transpose()*grf_old;
+            ext_torque_old.segment(0, 6) += trq_temp.segment(0, 6);
+        }        
+    }
+
+     // Eigen::VectorXd delta = inv_M*(-nle);
+    Eigen::VectorXd delta = inv_M*(-nle + ext_torque_old);
 
     //组建离散模型矩阵，只修改变化的部分
     double dt = 0.02; //dt==loop_dt 或者 dt>loop_dt
@@ -238,14 +246,14 @@ void quadrupedModel::createSelectMatrix(std::string const &subsystems_name, std:
             S.block(0, 6+3*idx, 6, 3) = (contact_cmd[idx] * J_T).topRows(6);
         }
 
-    } else {
-        for (int idx = 2; idx < 4; ++idx) { 
-            Eigen::MatrixXd J_T = J_linear_[idx].transpose();
-            S.block(0, 6+3*idx, 12, 3) = contact_cmd[idx] * J_T;
-        }
+    } else { //控制输入的顺序一直为u = [tau grf grf_aux]
         for (int idx = 0; idx < 2; ++idx) { 
-            Eigen::MatrixXd J_T = J_linear_[idx].transpose();
-            S.block(0, 6+3*idx, 6, 3) = (contact_cmd[idx] * J_T).topRows(6);
+            Eigen::MatrixXd J_T = J_linear_[s_idx+idx].transpose();
+            S.block(0, 6+3*idx, 12, 3) = contact_cmd[s_idx+idx] * J_T;
+        }
+        for (int idx = 2; idx < 4; ++idx) { 
+            Eigen::MatrixXd J_T = J_linear_[idx-s_idx].transpose();
+            S.block(0, 6+3*idx, 6, 3) = (contact_cmd[idx-s_idx] * J_T).topRows(6);
         }
     }
 
