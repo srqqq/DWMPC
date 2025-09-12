@@ -35,7 +35,7 @@ void quadrupedModel::modelInit(parameter const &model_param) {
         if (subsystems_name == "wb") {
             continue;
         } 
-        Ak_[subsystems_name] = Eigen::MatrixXd::Identity(model_param_.n_state, model_param_.n_state);
+        Ak_[subsystems_name] = Eigen::MatrixXd::Zero(model_param_.n_state, model_param_.n_state);
         Bk_[subsystems_name] = Eigen::MatrixXd::Zero(model_param_.n_state, model_param_.n_control);
     }
 
@@ -154,40 +154,26 @@ void quadrupedModel::updateSubsystem(std::string const &subsystems_name, Eigen::
      // Eigen::VectorXd delta = inv_M*(-nle);
     Eigen::VectorXd delta = inv_M*(-nle + ext_torque_old);
 
-    //组建离散模型矩阵，只修改变化的部分
-    double dt = 0.02; //dt==loop_dt 或者 dt>loop_dt
-    Ak_[subsystems_name].block(0, 12, 3, 3) = Eigen::MatrixXd::Identity(3, 3)*dt;
-    Ak_[subsystems_name].block(3, 15, 3, 3) = inv_jac_R*dt;
-    Ak_[subsystems_name].block(6, 18, 6, 6) = Eigen::MatrixXd::Identity(6, 6)*dt;
-    Ak_[subsystems_name].block(12, 36, 12, 1) = delta*dt;
+    //连续模型
+    Eigen::MatrixXd A = Eigen::MatrixXd::Zero(model_param_.n_state, model_param_.n_state);
+    Eigen::MatrixXd B = Eigen::MatrixXd::Zero(model_param_.n_state, model_param_.n_control);
 
-    // Eigen::MatrixXd J_linear_subsystem1(3,12); //???存疑，需要再仔细考虑下是否可以这样计算，不行就按全身动力学计算
-    // Eigen::MatrixXd J_linear_subsystem2(3,12);
-    // J_linear_subsystem1.block(0, 0, 3, 6) = J_linear_wb_[s_idx].block(0, 0, 3, 6);
-    // J_linear_subsystem1.block(0, 6, 3, 6) = J_linear_wb_[s_idx].block(0, 6+3*s_idx, 3, 6);
-    // J_linear_subsystem2.block(0, 0, 3, 6) = J_linear_wb_[s_idx+1].block(0, 0, 3, 6);
-    // J_linear_subsystem2.block(0, 6, 3, 6) = J_linear_wb_[s_idx+1].block(0, 6+3*s_idx, 3, 6);
-
-    // if (s_idx == 0) {
-    //     J_linear_subsystem1.block(0, 0, 3, 6) = J_linear_wb_[s_idx].block(0, 0, 3, 6);
-    //     J_linear_subsystem1.block(0, 6, 3, 6) = J_linear_wb_[s_idx].block(0, 6, 3, 6);
-    //     J_linear_subsystem2.block(0, 0, 3, 6) = J_linear_wb_[s_idx+1].block(0, 0, 3, 6);
-    //     J_linear_subsystem2.block(0, 6, 3, 6) = J_linear_wb_[s_idx+1].block(0, 6, 3, 6);
-    // } else {
-    //     J_linear_subsystem1.block(0, 0, 3, 6) = J_linear_wb_[s_idx].block(0, 0, 3, 6);
-    //     J_linear_subsystem1.block(0, 6, 3, 6) = J_linear_wb_[s_idx].block(0, 12, 3, 6);
-    //     J_linear_subsystem2.block(0, 0, 3, 6) = J_linear_wb_[s_idx+1].block(0, 0, 3, 6);
-    //     J_linear_subsystem2.block(0, 6, 3, 6) = J_linear_wb_[s_idx+1].block(0, 12, 3, 6);
-    // }
-
-    Ak_[subsystems_name].block(24, 12, 3, 12) = J_linear_[s_idx]*dt;
-    Ak_[subsystems_name].block(27, 12, 3, 12) = J_linear_[s_idx+1]*dt;
-    Ak_[subsystems_name].block(30, 36, 6, 1) = delta.segment(0, 6)*dt;
-    Ak_[subsystems_name](36,36) = 1.0;
+    A.block(0, 12, 3, 3)   = Eigen::MatrixXd::Identity(3, 3);
+    A.block(3, 15, 3, 3)   = inv_jac_R;
+    A.block(6, 18, 6, 6)   = Eigen::MatrixXd::Identity(6, 6);
+    A.block(12, 36, 12, 1) = delta;
+    A.block(24, 12, 3, 12) = J_linear_[s_idx];
+    A.block(27, 12, 3, 12) = J_linear_[s_idx+1];
+    A.block(30, 36, 6, 1)  = delta.segment(0, 6);
 
     Eigen::MatrixXd B_temp = inv_M*S; //12*18
-    Bk_[subsystems_name].block(12, 0, 12, 18) = B_temp*dt;
-    Bk_[subsystems_name].block(30, 0, 6, 18) = B_temp.block(0, 0, 6, 18)*dt;
+    B.block(12, 0, 12, 18) = B_temp;
+    B.block(30, 0, 6, 18)  = B_temp.block(0, 0, 6, 18);
+
+    //离散化
+    double dt = 0.02; //dt==loop_dt 或者 dt>loop_dt
+    Ak_[subsystems_name] = Eigen::MatrixXd::Identity(model_param_.n_state, model_param_.n_state) + A*dt;
+    Bk_[subsystems_name] = B*dt;
 
     return;
 }
