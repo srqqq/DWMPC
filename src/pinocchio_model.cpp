@@ -58,6 +58,9 @@ void quadrupedModel::modelUpdate(std::map<std::string,std::vector<double>> const
     // 计算所有动力学项
     pinocchio::computeAllTerms(pin_model_, pin_data_, q, v);
 
+    // pinocchio只计算了M的上三角部分，需要填充M下三角部分!!!
+    pin_data_.M.triangularView<Eigen::StrictlyLower>() = pin_data_.M.transpose().triangularView<Eigen::StrictlyLower>();
+
     // 从计算结果中提取惯性矩阵、科里奥利力矩阵和重力向量
     Eigen::MatrixXd const &M_wb = pin_data_.M;     // 惯性矩阵
     Eigen::VectorXd const &nle_wb = pin_data_.nle; //包含科里奥利力和重力项
