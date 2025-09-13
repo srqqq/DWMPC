@@ -56,10 +56,19 @@ void quadrupedModel::modelUpdate(std::map<std::string,std::vector<double>> const
     }
     
     // 计算所有动力学项
-    pinocchio::computeAllTerms(pin_model_, pin_data_, q, v);
+    // pinocchio::computeAllTerms(pin_model_, pin_data_, q, v);
 
+    // // pinocchio只计算了M的上三角部分，需要填充M下三角部分!!!
+    // pin_data_.M.triangularView<Eigen::StrictlyLower>() = pin_data_.M.transpose().triangularView<Eigen::StrictlyLower>();
+
+    // 参考qiayuan的调用方法
+    pinocchio::forwardKinematics(pin_model_, pin_data_, q, v);
+    pinocchio::computeJointJacobians(pin_model_, pin_data_);
+    pinocchio::updateFramePlacements(pin_model_, pin_data_);
+    pinocchio::crba(pin_model_, pin_data_, q);
     // pinocchio只计算了M的上三角部分，需要填充M下三角部分!!!
     pin_data_.M.triangularView<Eigen::StrictlyLower>() = pin_data_.M.transpose().triangularView<Eigen::StrictlyLower>();
+    pinocchio::nonLinearEffects(pin_model_, pin_data_, q, v);
 
     // 从计算结果中提取惯性矩阵、科里奥利力矩阵和重力向量
     Eigen::MatrixXd const &M_wb = pin_data_.M;     // 惯性矩阵
@@ -224,14 +233,14 @@ void quadrupedModel::createSelectMatrix(std::string const &subsystems_name, std:
             S.block(0, 6+3*idx, 6, 3) = (contact_cmd[idx] * J_T).topRows(6);
         }
 
-    } else {
-        for (int idx = 2; idx < 4; ++idx) { 
-            Eigen::MatrixXd J_T = J_linear_[idx].transpose();
-            S.block(0, 6+3*idx, 12, 3) = contact_cmd[idx] * J_T;
-        }
+    } else { //控制输入的顺序一直为u = [tau grf grf_aux]
         for (int idx = 0; idx < 2; ++idx) { 
-            Eigen::MatrixXd J_T = J_linear_[idx].transpose();
-            S.block(0, 6+3*idx, 6, 3) = (contact_cmd[idx] * J_T).topRows(6);
+            Eigen::MatrixXd J_T = J_linear_[s_idx+idx].transpose();
+            S.block(0, 6+3*idx, 12, 3) = contact_cmd[s_idx+idx] * J_T;
+        }
+        for (int idx = 2; idx < 4; ++idx) {
+            Eigen::MatrixXd J_T = J_linear_[idx-s_idx].transpose();
+            S.block(0, 6+3*idx, 6, 3) = (contact_cmd[idx-s_idx] * J_T).topRows(6);
         }
     }
 

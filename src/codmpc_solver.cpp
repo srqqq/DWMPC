@@ -395,7 +395,6 @@ void codmpcSolver::solve( bool &do_init,
             // update state from solution
             std::vector<Eigen::VectorXd> x = quadruped_model_.updatePrediction(x0_[problem], u_[problem], problem);
             int n_joints {solver_param_.subsystems_map_joint[problem].size()}; //6
-            int n_contact {solver_param_.subsystems_map_contact[problem].size()}; //2
             int counter = 0;
             //update data state
             for (int k{0};k<solver_param_.N_+1;k++)
@@ -469,17 +468,10 @@ void codmpcSolver::solve( bool &do_init,
                     counter = 0;
                     for(auto idx : solver_param_.subsystems_map_contact[problem])
                     {
-                        if (problem == "front") {
-                            data_["wb"].grf[k][3*idx] = u_[problem][k](n_joints+3*counter);
-                            data_["wb"].grf[k][3*idx+1] = u_[problem][k](n_joints+3*counter+1);
-                            data_["wb"].grf[k][3*idx+2] = u_[problem][k](n_joints+3*counter+2);
-                            counter++;
-                        } else {
-                            data_["wb"].grf[k][3*idx] = u_[problem][k](n_joints+3*n_contact+3*counter);
-                            data_["wb"].grf[k][3*idx+1] = u_[problem][k](n_joints+3*n_contact+3*counter+1);
-                            data_["wb"].grf[k][3*idx+2] = u_[problem][k](n_joints+3*n_contact+3*counter+2);
-                            counter++;
-                        }
+                        data_["wb"].grf[k][3*idx] = u_[problem][k](n_joints+3*counter);
+                        data_["wb"].grf[k][3*idx+1] = u_[problem][k](n_joints+3*counter+1);
+                        data_["wb"].grf[k][3*idx+2] = u_[problem][k](n_joints+3*counter+2);
+                        counter++;
                     }
                 }       
             }
