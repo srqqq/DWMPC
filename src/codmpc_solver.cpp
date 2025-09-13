@@ -132,7 +132,6 @@ void codmpcSolver::solve( bool &do_init,
             int counter = 0;
 
             // ============       MODEL       ============
-            quadruped_model_.grf_old_wb_ = data_["wb"].grf[0];
             quadruped_model_.modelUpdate(x0_map);
 
             // ============ INITAIAL CONDITION ============
@@ -272,21 +271,12 @@ void codmpcSolver::solve( bool &do_init,
 
                 // set grf //这里和原代码不同，我们只优化grf而不是grf_wb，因此只给当前子系统赋值即可
                 counter=0;
-                for(auto idx : solver_param_.subsystems_map_contact[problem]) //循环3*2=6次
+                for(auto idx : solver_param_.subsystems_map_contact["wb"]) //循环3*2=6次
                 {
                     u_ref_k(6+counter) = ref.at("grf")[k][3*idx];
                     u_ref_k(7+counter) = ref.at("grf")[k][3*idx+1];
                     u_ref_k(8+counter) = ref.at("grf")[k][3*idx+2];
                     counter+=3;              
-                }
-
-                counter=0;
-                for(auto idx : solver_param_.subsystems_map_contact[problem]) //循环3*2=6次
-                {
-                    u_ref_k(12+counter) = 0.0;
-                    u_ref_k(13+counter) = 0.0;
-                    u_ref_k(14+counter) = 0.0;
-                    counter+=3;
                 }
 
                 u_ref.push_back(u_ref_k);
@@ -405,6 +395,7 @@ void codmpcSolver::solve( bool &do_init,
             // update state from solution
             std::vector<Eigen::VectorXd> x = quadruped_model_.updatePrediction(x0_[problem], u_[problem], problem);
             int n_joints {solver_param_.subsystems_map_joint[problem].size()}; //6
+            int n_contact {solver_param_.subsystems_map_contact[problem].size()}; //2
             int counter = 0;
             //update data state
             for (int k{0};k<solver_param_.N_+1;k++)
@@ -478,10 +469,17 @@ void codmpcSolver::solve( bool &do_init,
                     counter = 0;
                     for(auto idx : solver_param_.subsystems_map_contact[problem])
                     {
-                        data_["wb"].grf[k][3*idx] = u_[problem][k](n_joints+3*counter);
-                        data_["wb"].grf[k][3*idx+1] = u_[problem][k](n_joints+3*counter+1);
-                        data_["wb"].grf[k][3*idx+2] = u_[problem][k](n_joints+3*counter+2);
-                        counter++;
+                        if (problem == "front") {
+                            data_["wb"].grf[k][3*idx] = u_[problem][k](n_joints+3*counter);
+                            data_["wb"].grf[k][3*idx+1] = u_[problem][k](n_joints+3*counter+1);
+                            data_["wb"].grf[k][3*idx+2] = u_[problem][k](n_joints+3*counter+2);
+                            counter++;
+                        } else {
+                            data_["wb"].grf[k][3*idx] = u_[problem][k](n_joints+3*n_contact+3*counter);
+                            data_["wb"].grf[k][3*idx+1] = u_[problem][k](n_joints+3*n_contact+3*counter+1);
+                            data_["wb"].grf[k][3*idx+2] = u_[problem][k](n_joints+3*n_contact+3*counter+2);
+                            counter++;
+                        }
                     }
                 }       
             }
@@ -652,9 +650,46 @@ void codmpcSolver::buildPhiMatrix(Eigen::MatrixXd &Phi, Eigen::MatrixXd const &A
 
 void codmpcSolver::qpOASESinit() {
 
+    // int const &N = solver_param_.N_;
+    // int const &n = solver_param_.n_state;
+    // int const &m = solver_param_.n_control;
+
     //构造大权重矩阵
     buildTotalWeightMatrices();
 
+    // 提前设置输入约束
+    // constrain 1: friction cone
+    // n_friction_cone_constrain_ = 10;
+    // double const mu = 0.5;
+    // double const fz_max = 500;
+    // Eigen::MatrixXd friction_matrix(5, 3);
+    // friction_matrix << 1,  0, mu,
+    //                   -1,  0, mu,
+    //                    0,  1, mu,
+    //                    0, -1, mu,
+    //                    0,  0,  1;  
+    // Eigen::MatrixXd friction_matrix_total = Eigen::MatrixXd::Zero(n_friction_cone_constrain_, m);
+    // friction_matrix_total.block(0, 6, 5, 3) = friction_matrix;
+    // friction_matrix_total.block(5, 9, 5, 3) = friction_matrix;
+    // Ac_friction_cone_ = Eigen::MatrixXd::Zero(n_friction_cone_constrain_*N, m*N);
+    // for (int k = 0; k < N; ++k) { 
+    //     Ac_friction_cone_.block(k*n_friction_cone_constrain_, k*m, n_friction_cone_constrain_, m) = friction_matrix_total;
+    // }
+    // Eigen::VectorXd vec_friction_min(n_friction_cone_constrain_);
+    // // Eigen::VectorXd vec_friction_max(n_friction_cone_constrain_);
+    // double const inf = std::numeric_limits<double>::infinity();
+    // vec_friction_min  << 0, 0, 0, 0, 0,
+    //                      0, 0, 0, 0, 0;
+    // vec_friction_max_ = Eigen::VectorXd::Zero(n_friction_cone_constrain_);
+    // vec_friction_max_ << fz_max, fz_max, fz_max, fz_max, fz_max,
+    //                      fz_max, fz_max, fz_max, fz_max, fz_max;
+
+    // lbAc_friction_cone_ = Eigen::VectorXd::Zero(n_friction_cone_constrain_*N);
+    // ubAc_friction_cone_ = Eigen::VectorXd::Zero(n_friction_cone_constrain_*N);
+    // for (int k = 0; k < N; ++k) { 
+    //     lbAc_friction_cone_.segment(k*n_friction_cone_constrain_, n_friction_cone_constrain_) = vec_friction_min;
+    //     ubAc_friction_cone_.segment(k*n_friction_cone_constrain_, n_friction_cone_constrain_) = vec_friction_max_;
+    // }
     return;
 }
 
@@ -731,33 +766,14 @@ void codmpcSolver::computeQPmatrices(std::string const &subsystems_name,
 
     Eigen::VectorXd vec_friction_min(n_friction_cone_constrain);
     Eigen::VectorXd vec_friction_max(n_friction_cone_constrain);
-
-    Eigen::VectorXd grf_old_wb = Eigen::Map<const Eigen::VectorXd>(data_["wb"].grf[0].data(), data_["wb"].grf[0].size());
-    Eigen::VectorXd grf_aux_lmt;
-    if (s_idx == 0) {
-        grf_aux_lmt = grf_old_wb.segment(6, 6);
-    } else {
-        grf_aux_lmt = grf_old_wb.segment(0, 6);
-    }
-
-    
     vec_friction_min << 0, 0, 0, 0, fz_min,
                         0, 0, 0, 0, fz_min,
-                        -grf_aux_lmt(0), -grf_aux_lmt(0), -grf_aux_lmt(1), -grf_aux_lmt(1), fz_min-grf_aux_lmt(2),
-                        -grf_aux_lmt(3), -grf_aux_lmt(3), -grf_aux_lmt(4), -grf_aux_lmt(4), fz_min-grf_aux_lmt(5);
+                        0, 0, 0, 0, fz_min,
+                        0, 0, 0, 0, fz_min;
     vec_friction_max << fz_max, fz_max, fz_max, fz_max, fz_max,
                         fz_max, fz_max, fz_max, fz_max, fz_max,
-                        fz_max-grf_aux_lmt(0), fz_max-grf_aux_lmt(0), fz_max-grf_aux_lmt(1), fz_max-grf_aux_lmt(1), fz_max-grf_aux_lmt(2),
-                        fz_max-grf_aux_lmt(3), fz_max-grf_aux_lmt(3), fz_max-grf_aux_lmt(4), fz_max-grf_aux_lmt(4), fz_max-grf_aux_lmt(5);
-
-    // vec_friction_min << 0, 0, 0, 0, fz_min,
-    //                     0, 0, 0, 0, fz_min,
-    //                     0, 0, 0, 0, fz_min,
-    //                     0, 0, 0, 0, fz_min;
-    // vec_friction_max << fz_max, fz_max, fz_max, fz_max, fz_max,
-    //                     fz_max, fz_max, fz_max, fz_max, fz_max,
-    //                     fz_max, fz_max, fz_max, fz_max, fz_max,
-    //                     fz_max, fz_max, fz_max, fz_max, fz_max;
+                        fz_max, fz_max, fz_max, fz_max, fz_max,
+                        fz_max, fz_max, fz_max, fz_max, fz_max;
 
     Eigen::MatrixXd Ac_friction_cone = Eigen::MatrixXd::Zero(n_friction_cone_constrain*N, m*N);
     Eigen::VectorXd lbAc_friction_cone = Eigen::VectorXd::Zero(n_friction_cone_constrain*N);
