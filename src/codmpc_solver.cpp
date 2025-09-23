@@ -739,7 +739,7 @@ void codmpcSolver::computeQPmatrices(std::string const &subsystems_name,
 
     // constrain 1: friction cone
     double const mu = 0.5;
-    double const fz_max = 500;
+    // double const fz_max = 500;
     double const fz_min = 0;
     std::vector<double> const contact_cmd = x0_map.at("contact_cmd");
     int n_friction_cone_constrain = 4*5;
@@ -756,16 +756,34 @@ void codmpcSolver::computeQPmatrices(std::string const &subsystems_name,
         friction_matrix.block(0+5*i, 6+3*i, 5, 3) = friction_matrix_block;
     }
 
+    std::vector<double> fz_max(4, 0);
+    double const fmax = 500;
+    if (s_idx == 0) {
+        fz_max[0] = contact_cmd[0]*fmax;
+        fz_max[1] = contact_cmd[1]*fmax;
+        fz_max[2] = contact_cmd[2]*fmax;
+        fz_max[3] = contact_cmd[3]*fmax;
+    } else {
+        fz_max[0] = contact_cmd[2]*fmax;
+        fz_max[1] = contact_cmd[3]*fmax;
+        fz_max[2] = contact_cmd[0]*fmax;
+        fz_max[3] = contact_cmd[1]*fmax;
+        // fz_max[0] = contact_cmd[0]*fmax;
+        // fz_max[1] = contact_cmd[1]*fmax;
+        // fz_max[2] = contact_cmd[2]*fmax;
+        // fz_max[3] = contact_cmd[3]*fmax;
+    }
+
     Eigen::VectorXd vec_friction_min(n_friction_cone_constrain);
     Eigen::VectorXd vec_friction_max(n_friction_cone_constrain);
     vec_friction_min << 0, 0, 0, 0, fz_min,
                         0, 0, 0, 0, fz_min,
                         0, 0, 0, 0, fz_min,
                         0, 0, 0, 0, fz_min;
-    vec_friction_max << fz_max, fz_max, fz_max, fz_max, fz_max,
-                        fz_max, fz_max, fz_max, fz_max, fz_max,
-                        fz_max, fz_max, fz_max, fz_max, fz_max,
-                        fz_max, fz_max, fz_max, fz_max, fz_max;
+    vec_friction_max << fz_max[0],  fz_max[0],  fz_max[0],  fz_max[0],  fz_max[0],
+                        fz_max[1],  fz_max[1],  fz_max[1],  fz_max[1],  fz_max[1],
+                        fz_max[2],  fz_max[2],  fz_max[2],  fz_max[2],  fz_max[2],
+                        fz_max[3],  fz_max[3],  fz_max[3],  fz_max[3],  fz_max[3];
 
     Eigen::MatrixXd Ac_friction_cone = Eigen::MatrixXd::Zero(n_friction_cone_constrain*N, m*N);
     Eigen::VectorXd lbAc_friction_cone = Eigen::VectorXd::Zero(n_friction_cone_constrain*N);
@@ -777,7 +795,8 @@ void codmpcSolver::computeQPmatrices(std::string const &subsystems_name,
     }
 
     // constrain 2: foot noslip
-    double const epsilon = 1e-6;
+    double const epsilon = 5e-3;
+    // double const epsilon_z = 5e-3;
 
     int n_noslip_constrain = 2*3;
     constrains_ += n_noslip_constrain;
@@ -789,11 +808,17 @@ void codmpcSolver::computeQPmatrices(std::string const &subsystems_name,
     for (int k = 0; k < N; ++k) {
         J_select.block(n_noslip_constrain*k, n*k+12, n_noslip_constrain, 12) = J_matrix;
     }
-    Eigen::VectorXd const vec_foot_vel_max = epsilon*Eigen::VectorXd::Ones(n_noslip_constrain*N);
+    Eigen::VectorXd vec_foot_vel_max = epsilon*Eigen::VectorXd::Ones(n_noslip_constrain*N);
+    Eigen::VectorXd vec_foot_vel_min = -vec_foot_vel_max;
+    // for(int i=0; i<N; ++i) {
+    //     vec_foot_vel_max(i*6+2) = epsilon_z;
+    //     vec_foot_vel_max(i*6+5) = epsilon_z;
+    // }
+
     double const inf = std::numeric_limits<double>::infinity();
     Eigen::MatrixXd Ac_noslip = J_select*Phi;
     Eigen::VectorXd vec_foot_vel = J_select*Fx0;
-    Eigen::VectorXd lbAc_noslip = -vec_foot_vel_max - vec_foot_vel;
+    Eigen::VectorXd lbAc_noslip = vec_foot_vel_min - vec_foot_vel;
     Eigen::VectorXd ubAc_noslip = vec_foot_vel_max - vec_foot_vel;
 
     // 依次填充子矩阵到对应位置
