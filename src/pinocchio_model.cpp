@@ -134,19 +134,6 @@ void quadrupedModel::updateSubsystem(std::string const &subsystems_name, Eigen::
     nle.segment(0, 6) = nle_wb.segment(0, 6);
     nle.segment(6, 6) = nle_wb.segment(6+3*s_idx, n_joint);
 
-    // //计算外部力矩，注意是关节力矩不是足端力
-    // Eigen::VectorXd ext_torque = Eigen::VectorXd::Zero(6+n_joint);
-    // Eigen::VectorXd grf = Eigen::Map<const Eigen::VectorXd>(x0_map.at("grf").data(), x0_map.at("grf").size());
-    // for(int idx = 0; idx < model_param_.n_contact_wb; ++idx) {
-    //     if ((idx == s_idx) || (idx == (n_contact-1)+s_idx)) {
-    //         Eigen::VectorXd torque_wb = x0_map.at("contact")[idx]*J_linear_wb_[idx].transpose()*grf.segment(3*idx, 3);
-    //         ext_torque.segment(0, 6) += torque_wb.segment(0, 6);
-    //         ext_torque.segment(6, 6) += torque_wb.segment(6+3*s_idx, n_joint);
-    //     } else {
-    //         ext_torque.segment(0, 6) += (x0_map.at("contact")[idx]*J_linear_wb_[idx].transpose()*grf.segment(3*idx, 3)).segment(0, 6);
-    //     }
-    // }
-
     // 计算矩阵 S (12x18)
     Eigen::MatrixXd S;
     createSelectMatrix(subsystems_name, x0_map, S);

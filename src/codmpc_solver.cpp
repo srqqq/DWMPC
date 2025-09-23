@@ -81,6 +81,9 @@ void codmpcSolver::solve( bool &do_init,
 
     // main loop  (number of iteration)
     //problem loop
+    // ============       MODEL       ============
+    quadruped_model_.modelUpdate(x0_map); // 放在循环外面
+
     for (auto problem : solver_param_.subsystems_name)
     {   
         // if whole body problem skip
@@ -88,9 +91,6 @@ void codmpcSolver::solve( bool &do_init,
             continue;
 
         int counter = 0;
-
-        // ============       MODEL       ============
-        quadruped_model_.modelUpdate(x0_map);
 
         // ============ INITAIAL CONDITION ============
         Eigen::VectorXd x0(solver_param_.n_state);
