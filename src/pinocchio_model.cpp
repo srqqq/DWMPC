@@ -39,6 +39,44 @@ void quadrupedModel::modelInit(parameter const &model_param) {
 
     std::cout << "quadrupedModel initialized!!!" << std::endl;
 
+    // 1. 基本信息
+    // pinocchio::Model &model = pin_model_;
+    // std::cout << "===== 基本模型信息 =====" << std::endl;
+    // std::cout << "根连杆索引: " << model.getJointId("trunk") << std::endl;
+    // std::cout << "关节总数 (含根连杆): " << model.njoints << std::endl;
+    // std::cout << "配置空间维度 (nq): " << model.nq << std::endl;  // 总自由度（位置）
+    // std::cout << "速度空间维度 (nv): " << model.nv << std::endl;  // 总自由度（速度）
+    // std::cout << "模型中所有连杆名称: " << std::endl;
+    // for (const auto& name : model.names) {
+    //     std::cout << "  - " << name << std::endl;
+    // }
+
+    // // 2. 关节详细信息
+    // std::cout << "\n===== 关节信息 =====" << std::endl;
+    // for (pinocchio::JointIndex jid = 0; jid < model.njoints; ++jid) {
+    //     std::cout << "关节 ID: " << jid << std::endl;
+    //     std::cout << "  名称: " << model.names[jid] << std::endl;
+    //     std::cout << "  类型: " << model.joints[jid].shortname() << std::endl;  // 关节类型（如RX、RY、RZ等）
+    //     std::cout << "  父连杆 ID: " << model.parents[jid] << std::endl;      // 父连杆索引
+    //     std::cout << "  关节位置维度: " << model.joints[jid].nq() << std::endl;  // 该关节的位置自由度
+    //     std::cout << "  关节速度维度: " << model.joints[jid].nv() << std::endl;  // 该关节的速度自由度
+    //     std::cout << "  相对于父连杆的初始变换:\n" << model.jointPlacements[jid].translation() << std::endl;  // 平移部分
+    // }
+
+    // // 3. 连杆惯性信息
+    // std::cout << "\n===== 连杆惯性信息 =====" << std::endl;
+    // for (pinocchio::JointIndex jid = 0; jid < model.njoints; ++jid) {
+    //     const auto& inertia = model.inertias[jid];
+    //     std::cout << "连杆 ID: " << jid << " (对应关节 " << jid << ")" << std::endl;
+    //     std::cout << "  质量: " << inertia.mass() << std::endl;
+    //     std::cout << "  质心位置: " << inertia.lever() << std::endl;  // 相对于关节的质心位置
+    //     std::cout << "  转动惯量矩阵:\n" << inertia.inertia() << std::endl;
+    // }
+
+    // // 打印模型信息（同上）
+    // std::cout << "关节总数: " << model.njoints << std::endl;
+    // std::cout << "配置空间维度: " << model.nq << std::endl;
+
     return;
 }      
 
