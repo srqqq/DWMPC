@@ -188,8 +188,10 @@ void quadrupedModel::updateSubsystem(std::string const &subsystems_name, Eigen::
     A.block(3, 15, 3, 3)   = inv_jac_R;
     A.block(6, 18, 6, 6)   = Eigen::MatrixXd::Identity(6, 6);
     A.block(12, 36, 12, 1) = delta;
-    A.block(24, 12, 3, 12) = J_linear_[s_idx];
-    A.block(27, 12, 3, 12) = J_linear_[s_idx+1];
+    // A.block(24, 12, 3, 12) = J_linear_[s_idx];
+    // A.block(27, 12, 3, 12) = J_linear_[s_idx+1];
+    A.block(24, 18, 3, 3) = J_linear_wb_[s_idx].block(0, 6+s_idx*3, 3, 3); // 只使用每条腿自己的雅可比矩阵，腿终于能动了！！！
+    A.block(27, 21, 3, 3) = J_linear_wb_[s_idx].block(0, 6+(s_idx+1)*3, 3, 3);
     A.block(30, 36, 6, 1)  = delta.segment(0, 6);
 
     Eigen::MatrixXd B_temp = inv_M*S; //12*18
