@@ -101,8 +101,8 @@ void quadrupedModel::modelUpdate(std::map<std::string,std::vector<double>> const
 
     // 参考qiayuan的调用方法
     pinocchio::forwardKinematics(pin_model_, pin_data_, q, v);
-    pinocchio::computeJointJacobians(pin_model_, pin_data_);
     pinocchio::updateFramePlacements(pin_model_, pin_data_);
+    pinocchio::computeJointJacobians(pin_model_, pin_data_);
     pinocchio::crba(pin_model_, pin_data_, q);
     // pinocchio只计算了M的上三角部分，需要填充M下三角部分!!!
     pin_data_.M.triangularView<Eigen::StrictlyLower>() = pin_data_.M.transpose().triangularView<Eigen::StrictlyLower>();
@@ -157,8 +157,8 @@ void quadrupedModel::updateSubsystem(std::string const &subsystems_name, Eigen::
     int &n_contact = model_param_.n_contact;
 
     //适配子系统的MCG
-    Eigen::MatrixXd M(6+n_joint, 6+n_joint);
-    Eigen::VectorXd nle(6+model_param_.n_joint);
+    Eigen::MatrixXd M = Eigen::MatrixXd::Zero(6+n_joint, 6+n_joint);
+    Eigen::VectorXd nle = Eigen::VectorXd::Zero(6+model_param_.n_joint);
 
     M.block(0, 0, 6, 6) = M_wb.block(0, 0, 6, 6);  // floating base
     M.block(6, 6, n_joint, n_joint) = M_wb.block(6+3*s_idx, 6+3*s_idx, n_joint, n_joint);
@@ -196,6 +196,11 @@ void quadrupedModel::updateSubsystem(std::string const &subsystems_name, Eigen::
     double dt = 0.02; //dt==loop_dt 或者 dt>loop_dt
     Ak_[subsystems_name] = Eigen::MatrixXd::Identity(model_param_.n_state, model_param_.n_state) + A*dt;
     Bk_[subsystems_name] = B*dt;
+
+    // std::cout << "M is : " << subsystems_name << std::endl;
+    // debug_print(M);
+    // std::cout << "nle is : " << subsystems_name << std::endl;
+    // debug_print(nle);
 
     return;
 }
