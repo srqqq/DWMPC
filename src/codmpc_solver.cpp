@@ -741,13 +741,13 @@ void codmpcSolver::computeQPmatrices(std::string const &subsystems_name,
 
     int n_noslip_constrain = 2*3;
     constrains_ += n_noslip_constrain;
-    Eigen::MatrixXd J_matrix = Eigen::MatrixXd::Zero(6, 12);
-    J_matrix.block(0, 0, 3, 12) = contact_cmd[s_idx]*quadruped_model_.J_linear_[s_idx];
-    J_matrix.block(3, 0, 3, 12) = contact_cmd[s_idx+1]*quadruped_model_.J_linear_[s_idx+1];
+    Eigen::MatrixXd J_matrix = Eigen::MatrixXd::Zero(6, 6);
+    J_matrix.block(0, 0, 3, 3) = contact_cmd[s_idx]*quadruped_model_.J_linear_[s_idx];
+    J_matrix.block(3, 3, 3, 3) = contact_cmd[s_idx+1]*quadruped_model_.J_linear_[s_idx+1];
 
     Eigen::MatrixXd J_select = Eigen::MatrixXd::Zero(n_noslip_constrain*N, total_n);
     for (int k = 0; k < N; ++k) {
-        J_select.block(n_noslip_constrain*k, n*k+12, n_noslip_constrain, 12) = J_matrix;
+        J_select.block(n_noslip_constrain*k, n*k+18, n_noslip_constrain, 6) = J_matrix;
     }
     Eigen::VectorXd vec_foot_vel_max = epsilon*Eigen::VectorXd::Ones(n_noslip_constrain*N);
     Eigen::VectorXd vec_foot_vel_min = -vec_foot_vel_max;
