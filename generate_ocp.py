@@ -139,7 +139,7 @@ class ocp_formulation:
                 J = self.kinDyn_wb_.jacobian_fun(self.contact_frame_name_list_wb_[idx])
                 torque_wb = (contact_state[idx]*J(w_H_b,q_wb)[:3,:].T@grf_wb[3*idx:3+3*idx])
                 ext_torque[:6] += torque_wb[:6]
-                ext_torque[6:] += torque_wb[6+3*s_idx:6+3*s_idx+n_joints]
+                ext_torque[6:] += torque_wb[6+3*s_idx:6+3*s_idx+n_joints] # 非全身，无偶合。前半部分只保留了前两条腿的相互作用力，后半部分同理
             else:
                 J = self.kinDyn_wb_.jacobian_fun(self.contact_frame_name_list_wb_[idx])
                 ext_torque[:6] += (contact_state[idx]*J(w_H_b,q_wb)[:3,:].T@grf_wb[3*idx:3*(idx+1)])[:6]
@@ -182,7 +182,7 @@ class ocp_formulation:
         for frame in self.contact_frame_name_list_:
             J = self.kinDyn_wb_.jacobian_fun(frame)
             J_sb = J(w_H_b,q_wb)[:3,:6+n_joints]
-            J_sb[:,6:] = J(w_H_b,q_wb)[:3,6+3*s_idx:6+3*s_idx+n_joints]
+            J_sb[:,6:] = J(w_H_b,q_wb)[:3,6+3*s_idx:6+3*s_idx+n_joints] # 非全身，无偶合，J_sb=3*12，这里做了拆分
             expr_sc[3*kk:3+3*kk] = contact_state[s_idx+kk]*J_sb@v #zero linear speed of the foot when on the ground
             kk = kk + 1
         ng_sc = 3*n_contact
@@ -319,7 +319,7 @@ class ocp_formulation:
         kk = 0
         foot = cs.SX.zeros(3*n_contact,1)
         for frame in self.contact_frame_name_list_:
-            foot[kk:kk+3] = self.kinDyn_wb_.forward_kinematics_fun(frame)(w_H_b,q_wb)[:3,3]
+            foot[kk:kk+3] = self.kinDyn_wb_.forward_kinematics_fun(frame)(w_H_b,q_wb)[:3,3] # 全身，有耦合，正向运动学
             kk = kk + 3
 
         angle_error = (SO3(quat) - SO3(quat_ref)).vec

@@ -16,8 +16,12 @@ void quadrupedModel::modelInit(parameter const &model_param) {
     contact_frame_name_list_wb_ = {"FL_foot", "FR_foot", "RL_foot", "RR_foot"};
 
     J_linear_wb_.resize(model_param_.n_contact_wb);
+    J_linear_sub_.resize(model_param_.n_contact_wb);
+    J_linear_leg_.resize(model_param_.n_contact_wb);
 
-    J_linear_.resize(model_param_.n_contact_wb);
+    world_J_linear_wb_.resize(model_param_.n_contact_wb);
+    world_J_linear_sub_.resize(model_param_.n_contact_wb);
+    world_J_linear_leg_.resize(model_param_.n_contact_wb);
 
     // 设置文件路径
     std::string urdf_filename{"/usr/include/dls2/controllers/dwmpc/urdf/go2.urdf"};
@@ -122,12 +126,28 @@ void quadrupedModel::modelUpdate(std::map<std::string,std::vector<double>> const
     //计算雅可比矩阵，用于计算外部力矩和填充模型参数
     for (size_t i = 0; i < model_param_.n_contact_wb; ++i) {
         int frame_id = pin_model_.getFrameId(contact_frame_name_list_wb_[i]);
-        Eigen::MatrixXd J(6, pin_model_.nv);
+
+        // pinocchio::LOCAL_WORLD_ALIGNED
+        Eigen::MatrixXd J = Eigen::MatrixXd::Zero(6, pin_model_.nv);
         pinocchio::getFrameJacobian(pin_model_, pin_data_, frame_id, pinocchio::LOCAL_WORLD_ALIGNED, J);
-        // pinocchio::getFrameJacobian(pin_model_, pin_data_, frame_id, pinocchio::LOCAL, J);
         J_linear_wb_[i] = J.topRows(3);
-        // 更新子系统雅可比
-        J_linear_[i] = J_linear_wb_[i].block(0, 6+i*3, 3, 3);
+        J_linear_leg_[i] = J_linear_wb_[i].block(0, 6+i*3, 3, 3);       
+        int s_idx = (i < model_param_.n_contact? 0 : 2);
+        Eigen::MatrixXd J_temp = Eigen::MatrixXd::Zero(3, 12);
+        J_temp.block(0, 0, 3, 6) = J_linear_wb_[i].block(0, 0, 3, 6);
+        J_temp.block(0, 6, 3, 6) = J_linear_wb_[i].block(0, 6+3*s_idx, 3, 6);
+        J_linear_sub_[i] = J_temp;
+
+        // pinocchio::WORLD
+        Eigen::MatrixXd world_J = Eigen::MatrixXd::Zero(6, pin_model_.nv);
+        pinocchio::getFrameJacobian(pin_model_, pin_data_, frame_id, pinocchio::WORLD, world_J);
+        world_J_linear_wb_[i] = world_J.topRows(3);
+        world_J_linear_leg_[i] = world_J_linear_wb_[i].block(0, 6+i*3, 3, 3);       
+        // int s_idx = (i < model_param_.n_contact? 0 : 2);
+        Eigen::MatrixXd world_J_temp = Eigen::MatrixXd::Zero(3, 12);
+        world_J_temp.block(0, 0, 3, 6) = world_J_linear_wb_[i].block(0, 0, 3, 6);
+        world_J_temp.block(0, 6, 3, 6) = world_J_linear_wb_[i].block(0, 6+3*s_idx, 3, 6);
+        world_J_linear_sub_[i] = world_J_temp;        
     }
 
     // 更新子系统
@@ -184,8 +204,23 @@ void quadrupedModel::updateSubsystem(std::string const &subsystems_name, Eigen::
     A.block(3, 15, 3, 3)   = inv_jac_R;
     A.block(6, 18, 6, 6)   = Eigen::MatrixXd::Identity(6, 6);
     A.block(12, 36, 12, 1) = delta;
-    A.block(24, 18, 3, 3) = J_linear_[s_idx]; // 只使用每条腿自己的雅可比矩阵，腿终于能动了！！！
-    A.block(27, 21, 3, 3) = J_linear_[s_idx+1];
+
+    // case 1: 使用LOCAL_WORLD_ALIGNED，子系统雅可比
+    A.block(24, 12, 3, 12) = J_linear_sub_[s_idx];
+    A.block(27, 12, 3, 12) = J_linear_sub_[s_idx+1];
+
+    // case 2: 使用LOCAL_WORLD_ALIGNED，单腿雅可比
+    // A.block(24, 18, 3, 3) = J_linear_leg_[s_idx]; // 只使用每条腿自己的雅可比矩阵，腿终于能动了！！！
+    // A.block(27, 21, 3, 3) = J_linear_leg_[s_idx+1];
+
+    // case 3: 使用WORLD，子系统雅可比
+    // A.block(24, 12, 3, 12) = world_J_linear_sub_[s_idx];
+    // A.block(27, 12, 3, 12) = world_J_linear_sub_[s_idx+1];
+
+    // case 4: 使用WORLD，单腿雅可比
+    // A.block(24, 18, 3, 3) = J_linear_wb_[s_idx].block(0, 6+s_idx*3, 3, 3);
+    // A.block(27, 21, 3, 3) = J_linear_wb_[s_idx+1].block(0, 6+(s_idx+1)*3, 3, 3);
+
     A.block(30, 36, 6, 1)  = delta.segment(0, 6);
 
     Eigen::MatrixXd B_temp = inv_M*S; //12*18
@@ -251,28 +286,40 @@ void quadrupedModel::createSelectMatrix(std::string const &subsystems_name, std:
     std::vector<double> contact_cmd = x0_map.at("contact_cmd");
     if (s_idx == 0) {
         for (int idx = 0; idx < 2; ++idx) { 
-            Eigen::MatrixXd J = Eigen::MatrixXd::Zero(3, 12);
-            J.block(0, 0, 3, 6) = J_linear_wb_[idx].block(0, 0, 3, 6);
-            J.block(0, 6+3*idx, 3, 3) = J_linear_[idx];
-            S.block(0, 6+3*idx, 12, 3) = contact_cmd[idx] * J.transpose();
+            Eigen::MatrixXd J_T = J_linear_sub_[idx].transpose();
+            S.block(0, 6+3*idx, 12, 3) = contact_cmd[idx] * J_T;
+
+            // Eigen::MatrixXd J = Eigen::MatrixXd::Zero(3, 12);
+            // J.block(0, 0, 3, 6) = J_linear_wb_[idx].block(0, 0, 3, 6);
+            // J.block(0, 6+3*idx, 3, 3) = J_linear_leg_[idx];
+            // S.block(0, 6+3*idx, 12, 3) = contact_cmd[idx] * J.transpose();
         }
         for (int idx = 2; idx < 4; ++idx) { 
-            Eigen::MatrixXd J = Eigen::MatrixXd::Zero(3, 12);
-            J.block(0, 0, 3, 6) = J_linear_wb_[idx].block(0, 0, 3, 6);
-            S.block(0, 6+3*idx, 12, 3) = contact_cmd[idx] * J.transpose();
+            Eigen::MatrixXd J_T = J_linear_sub_[idx].transpose();
+            S.block(0, 6+3*idx, 6, 3) = (contact_cmd[idx] * J_T).topRows(6);
+
+            // Eigen::MatrixXd J = Eigen::MatrixXd::Zero(3, 12);
+            // J.block(0, 0, 3, 6) = J_linear_wb_[idx].block(0, 0, 3, 6);
+            // S.block(0, 6+3*idx, 12, 3) = contact_cmd[idx] * J.transpose();
         }
 
     } else { //控制输入的顺序一直为u = [tau grf grf_aux]
         for (int idx = 0; idx < 2; ++idx) { 
-            Eigen::MatrixXd J = Eigen::MatrixXd::Zero(3, 12);
-            J.block(0, 0, 3, 6) = J_linear_wb_[s_idx+idx].block(0, 0, 3, 6);
-            J.block(0, 6+3*idx, 3, 3) = J_linear_[s_idx+idx];
-            S.block(0, 6+3*idx, 12, 3) = contact_cmd[s_idx+idx] * J.transpose();
+            Eigen::MatrixXd J_T = J_linear_sub_[s_idx+idx].transpose();
+            S.block(0, 6+3*idx, 12, 3) = contact_cmd[s_idx+idx] * J_T;
+
+            // Eigen::MatrixXd J = Eigen::MatrixXd::Zero(3, 12);
+            // J.block(0, 0, 3, 6) = J_linear_wb_[s_idx+idx].block(0, 0, 3, 6);
+            // J.block(0, 6+3*idx, 3, 3) = J_linear_leg_[s_idx+idx];
+            // S.block(0, 6+3*idx, 12, 3) = contact_cmd[s_idx+idx] * J.transpose();
         }
         for (int idx = 2; idx < 4; ++idx) {
-            Eigen::MatrixXd J = Eigen::MatrixXd::Zero(3, 12);
-            J.block(0, 0, 3, 6) = J_linear_wb_[idx-s_idx].block(0, 0, 3, 6);
-            S.block(0, 6+3*idx, 12, 3) = contact_cmd[idx-s_idx] * J.transpose();
+            Eigen::MatrixXd J_T = J_linear_sub_[idx-s_idx].transpose();
+            S.block(0, 6+3*idx, 6, 3) = (contact_cmd[idx-s_idx] * J_T).topRows(6);
+
+            // Eigen::MatrixXd J = Eigen::MatrixXd::Zero(3, 12);
+            // J.block(0, 0, 3, 6) = J_linear_wb_[idx-s_idx].block(0, 0, 3, 6);
+            // S.block(0, 6+3*idx, 12, 3) = contact_cmd[idx-s_idx] * J.transpose();
         }
     }
 

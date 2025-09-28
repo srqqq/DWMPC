@@ -47,7 +47,14 @@ class quadrupedModel {
 
     std::map<std::string, Eigen::MatrixXd> Ak_;
     std::map<std::string, Eigen::MatrixXd> Bk_;
-    std::vector<Eigen::MatrixXd> J_linear_; //子系统足端线速度雅可比矩阵，维度3*3
+
+    std::vector<Eigen::MatrixXd> J_linear_wb_; //足端线速度雅可比矩阵
+    std::vector<Eigen::MatrixXd> J_linear_sub_; //足端线速度雅可比矩阵
+    std::vector<Eigen::MatrixXd> J_linear_leg_; //单腿足端线速度雅可比矩阵，维度3*3
+
+    std::vector<Eigen::MatrixXd> world_J_linear_wb_; //world系下的足端线速度雅可比矩阵
+    std::vector<Eigen::MatrixXd> world_J_linear_sub_; //world系下的子系统足端线速度雅可比矩阵
+    std::vector<Eigen::MatrixXd> world_J_linear_leg_; //world系下单腿足端线速度雅可比矩阵，维度3*3
 
     private:
     void updateSubsystem(std::string const &subsystems_name, Eigen::MatrixXd const &M_wb, 
@@ -58,7 +65,6 @@ class quadrupedModel {
     parameter model_param_;
     std::vector<std::string> subsystems_name_list_;
     std::vector<std::string> contact_frame_name_list_wb_;
-    std::vector<Eigen::MatrixXd> J_linear_wb_; //足端线速度雅可比矩阵
 };
 
 double normalizeAngle(double angle);
