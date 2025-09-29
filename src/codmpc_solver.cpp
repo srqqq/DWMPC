@@ -747,8 +747,8 @@ void codmpcSolver::computeQPmatrices(std::string const &subsystems_name,
     int n_noslip_constrain = 2*3;
     constrains_ += n_noslip_constrain;
     Eigen::MatrixXd J_matrix = Eigen::MatrixXd::Zero(6, 12);
-    J_matrix.block(0, 0, 3, 12) = contact_cmd[s_idx]*quadruped_model_.J_linear_sub_[s_idx];
-    J_matrix.block(3, 0, 3, 12) = contact_cmd[s_idx+1]*quadruped_model_.J_linear_sub_[s_idx+1];
+    J_matrix.block(0, 0, 3, 12) = contact_cmd[s_idx]*quadruped_model_.J_linear_submix_[s_idx];
+    J_matrix.block(3, 0, 3, 12) = contact_cmd[s_idx+1]*quadruped_model_.J_linear_submix_[s_idx+1];
 
     Eigen::MatrixXd J_select = Eigen::MatrixXd::Zero(n_noslip_constrain*N, total_n);
     for (int k = 0; k < N; ++k) {
