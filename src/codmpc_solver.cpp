@@ -99,9 +99,9 @@ void codmpcSolver::solve( bool &do_init,
         x0(1) = x0_map.at("p")[1];
         x0(2) = x0_map.at("p")[2];
 
-        x0(3) = normalizeAngle(x0_map.at("rpy")[0]);
+        x0(3) = normalizeAngle(x0_map.at("rpy")[2]);
         x0(4) = normalizeAngle(x0_map.at("rpy")[1]);
-        x0(5) = normalizeAngle(x0_map.at("rpy")[2]);
+        x0(5) = normalizeAngle(x0_map.at("rpy")[0]);
         // problem_initial_condition.push_back(normalizeAngle(x0_map.at("rpy")[0] - ref.at("rpy")[0][0])); // 姿态欧拉角ref设置为0，由于欧拉角有过圈问题，在这里先算好误差
         // problem_initial_condition.push_back(normalizeAngle(x0_map.at("rpy")[1] - ref.at("rpy")[0][1]));
         // problem_initial_condition.push_back(normalizeAngle(x0_map.at("rpy")[2] - ref.at("rpy")[0][2]));
@@ -117,9 +117,9 @@ void codmpcSolver::solve( bool &do_init,
         x0(13) = x0_map.at("dp")[1];
         x0(14) = x0_map.at("dp")[2];
 
-        x0(15) = x0_map.at("omega")[0];
+        x0(15) = x0_map.at("omega")[2];
         x0(16) = x0_map.at("omega")[1];
-        x0(17) = x0_map.at("omega")[2];
+        x0(17) = x0_map.at("omega")[0];
 
         counter=0;
         for(auto idx : solver_param_.subsystems_map_joint[problem]) //循环6次
@@ -164,9 +164,9 @@ void codmpcSolver::solve( bool &do_init,
             x_ref_k(1) = ref.at("p")[k][1];
             x_ref_k(2) = ref.at("p")[k][2];
 
-            x_ref_k(3) = ref.at("rpy")[k][0];
+            x_ref_k(3) = ref.at("rpy")[k][2];
             x_ref_k(4) = ref.at("rpy")[k][1];
-            x_ref_k(5) = ref.at("rpy")[k][2];
+            x_ref_k(5) = ref.at("rpy")[k][0];
             // ref_k.push_back(0); // 姿态欧拉角ref设置为0，由于欧拉角有过圈问题，在这里先算好误差
             // ref_k.push_back(0);
             // ref_k.push_back(0);
@@ -184,9 +184,9 @@ void codmpcSolver::solve( bool &do_init,
             x_ref_k(13) = ref.at("dp")[k][1];
             x_ref_k(14) = ref.at("dp")[k][2];
 
-            x_ref_k(15) = ref.at("omega")[k][0];
+            x_ref_k(15) = ref.at("omega")[k][2];
             x_ref_k(16) = ref.at("omega")[k][1];
-            x_ref_k(17) = ref.at("omega")[k][2];
+            x_ref_k(17) = ref.at("omega")[k][0];
 
             // set dq
             counter=0;
@@ -268,9 +268,9 @@ void codmpcSolver::solve( bool &do_init,
                 Q_.diagonal()[2] = weight_vec.at("p")[2];
 
                 // weight quat
-                Q_.diagonal()[3] = weight_vec.at("quat")[0];
+                Q_.diagonal()[3] = weight_vec.at("quat")[2];
                 Q_.diagonal()[4] = weight_vec.at("quat")[1];
-                Q_.diagonal()[5] = weight_vec.at("quat")[2];
+                Q_.diagonal()[5] = weight_vec.at("quat")[0];
 
                 // weight q
                 counter = 0;
@@ -286,9 +286,9 @@ void codmpcSolver::solve( bool &do_init,
                 Q_.diagonal()[14] = weight_vec.at("dp")[2];
 
                 // weight omega
-                Q_.diagonal()[15] = weight_vec.at("omega")[0];
+                Q_.diagonal()[15] = weight_vec.at("omega")[2];
                 Q_.diagonal()[16] = weight_vec.at("omega")[1];
-                Q_.diagonal()[17] = weight_vec.at("omega")[2];
+                Q_.diagonal()[17] = weight_vec.at("omega")[0];
 
                 // weight dq
                 counter = 0;
@@ -383,11 +383,11 @@ void codmpcSolver::solve( bool &do_init,
             data_[problem].p[k][2] = x[k](2);
 
             //rpy quat
-            data_[problem].rpy[k][0] = x[k](3);
+            data_[problem].rpy[k][0] = x[k](5); //data永远是rpy x3~5: yaw pitch roll
             data_[problem].rpy[k][1] = x[k](4);
-            data_[problem].rpy[k][2] = x[k](5);
+            data_[problem].rpy[k][2] = x[k](3);
 
-            Eigen::Quaterniond quat = rpyToquat(Eigen::Vector3d(x[k](3), x[k](4), x[k](5)));
+            Eigen::Quaterniond quat = rpyToquat(Eigen::Vector3d(x[k](5), x[k](4), x[k](3)));
 
             data_[problem].quat[k][0] = quat.x();
             data_[problem].quat[k][1] = quat.y();
@@ -408,9 +408,9 @@ void codmpcSolver::solve( bool &do_init,
             data_[problem].dp[k][2] = x[k](14);
 
             //omega
-            data_[problem].omega[k][0] = x[k](15);
+            data_[problem].omega[k][0] = x[k](17);
             data_[problem].omega[k][1] = x[k](16);
-            data_[problem].omega[k][2] = x[k](17);
+            data_[problem].omega[k][2] = x[k](15);
 
             //dq
             counter = 0;
@@ -747,8 +747,8 @@ void codmpcSolver::computeQPmatrices(std::string const &subsystems_name,
     int n_noslip_constrain = 2*3;
     constrains_ += n_noslip_constrain;
     Eigen::MatrixXd J_matrix = Eigen::MatrixXd::Zero(6, 12);
-    J_matrix.block(0, 0, 3, 12) = contact_cmd[s_idx]*quadruped_model_.J_linear_submix_[s_idx];
-    J_matrix.block(3, 0, 3, 12) = contact_cmd[s_idx+1]*quadruped_model_.J_linear_submix_[s_idx+1];
+    J_matrix.block(0, 0, 3, 12) = contact_cmd[s_idx]*quadruped_model_.J_linear_sub_[s_idx];
+    J_matrix.block(3, 0, 3, 12) = contact_cmd[s_idx+1]*quadruped_model_.J_linear_sub_[s_idx+1];
 
     Eigen::MatrixXd J_select = Eigen::MatrixXd::Zero(n_noslip_constrain*N, total_n);
     for (int k = 0; k < N; ++k) {

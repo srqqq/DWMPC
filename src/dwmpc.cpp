@@ -240,7 +240,7 @@ namespace controllers
         std::map<std::string,std::vector<double>> initial_condition;
         initial_condition["p"] = {p[0],p[1],p[2]};
         initial_condition["quat"] = {quat.x(),quat.y(),quat.z(),quat.w()};
-        Eigen::Vector3d rpy_init = quatToRPY(Eigen::Quaterniond(quat.w(), quat.x(), quat.y(), quat.z()));
+        Eigen::Vector3d rpy_init = quatToRPY(quat);
         initial_condition["rpy"] = {rpy_init(0), rpy_init(1), rpy_init(2)};
         initial_condition["dp"] = {dp[0],dp[1],dp[2]};
         initial_condition["omega"] = {omega[0],omega[1],omega[2]};
@@ -299,10 +299,10 @@ namespace controllers
         // std::cout << "desired orientation: " << desired_orientation.x() << " " << desired_orientation.y() << " " << desired_orientation.z() << " " << desired_orientation.w() << std::endl;
         // std::cout << "rotated desired orientation: " << rotated_desired_orientation.x() << " " << rotated_desired_orientation.y() << " " << rotated_desired_orientation.z() << " " << rotated_desired_orientation.w() << std::endl;
 
-        Eigen::Vector3d rpy = quatToRPY(quat);
-        double yaw = rpy[2];
-        Eigen::Vector3d desired_rpy = quatToRPY(desired_orientation);
-        Eigen::Quaterniond rotated_desired_orientation = rpyToquat(Eigen::Vector3d(desired_rpy[0],desired_rpy[1],rpy[2]));
+        // Eigen::Vector3d rpy = quatToRPY(quat);
+        double yaw = rpy_init[2];
+        // Eigen::Vector3d desired_rpy = quatToRPY(desired_orientation);
+        // Eigen::Quaterniond rotated_desired_orientation = rpyToquat(Eigen::Vector3d(desired_rpy[0],desired_rpy[1],rpy[2]));
 
         desired_["quat"][0] = 0;
         desired_["quat"][1] = 0;

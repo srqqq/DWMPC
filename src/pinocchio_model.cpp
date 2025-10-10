@@ -17,19 +17,26 @@ void quadrupedModel::modelInit(parameter const &model_param) {
 
     J_linear_wb_.resize(model_param_.n_contact_wb);
     J_linear_sub_.resize(model_param_.n_contact_wb);
-    J_linear_leg_.resize(model_param_.n_contact_wb);
-    J_linear_submix_.resize(model_param_.n_contact_wb);
+    // J_linear_leg_.resize(model_param_.n_contact_wb);
+    // J_linear_submix_.resize(model_param_.n_contact_wb);
 
-    world_J_linear_wb_.resize(model_param_.n_contact_wb);
-    world_J_linear_sub_.resize(model_param_.n_contact_wb);
-    world_J_linear_leg_.resize(model_param_.n_contact_wb);
-    world_J_linear_submix_.resize(model_param_.n_contact_wb);
+    // world_J_linear_wb_.resize(model_param_.n_contact_wb);
+    // world_J_linear_sub_.resize(model_param_.n_contact_wb);
+    // world_J_linear_leg_.resize(model_param_.n_contact_wb);
+    // world_J_linear_submix_.resize(model_param_.n_contact_wb);
 
     // 设置文件路径
     std::string urdf_filename{"/usr/include/dls2/controllers/dwmpc/urdf/go2.urdf"};
 
+    // add 6 DoF for the floating base
+    pinocchio::JointModelComposite jointComposite(2);
+    jointComposite.addJoint(pinocchio::JointModelTranslation());
+    jointComposite.addJoint(pinocchio::JointModelSphericalZYX());
     // 加载模型
-    pinocchio::urdf::buildModel(urdf_filename, pinocchio::JointModelFreeFlyer(), pin_model_);
+    pinocchio::urdf::buildModel(urdf_filename, jointComposite, pin_model_);
+
+    // 加载模型
+    // pinocchio::urdf::buildModel(urdf_filename, pinocchio::JointModelFreeFlyer(), pin_model_);
 
     // 绑定data和model
     pin_data_ = pinocchio::Data(pin_model_);
@@ -88,17 +95,24 @@ void quadrupedModel::modelInit(parameter const &model_param) {
 
 void quadrupedModel::modelUpdate(std::map<std::string,std::vector<double>> const &x0_map) {        
     
-    Eigen::VectorXd q(19);
+    Eigen::VectorXd q(18);
     Eigen::VectorXd v(18);
+
     q.segment(0, 3) = Eigen::Map<const Eigen::VectorXd>(x0_map.at("p").data(), x0_map.at("p").size());
-    q.segment(3, 4) = Eigen::Map<const Eigen::VectorXd>(x0_map.at("quat").data(), x0_map.at("quat").size());
+    // q.segment(3, 4) = Eigen::Map<const Eigen::VectorXd>(x0_map.at("quat").data(), x0_map.at("quat").size());
+    q(3) = x0_map.at("rpy")[2];
+    q(4) = x0_map.at("rpy")[1];
+    q(5) = x0_map.at("rpy")[0];
     v.segment(0, 3) = Eigen::Map<const Eigen::VectorXd>(x0_map.at("dp").data(), x0_map.at("dp").size());
-    v.segment(3, 3) = Eigen::Map<const Eigen::VectorXd>(x0_map.at("omega").data(), x0_map.at("omega").size());    
+    // v.segment(3, 3) = Eigen::Map<const Eigen::VectorXd>(x0_map.at("omega").data(), x0_map.at("omega").size());    
+    v(3) = x0_map.at("omega")[2];
+    v(4) = x0_map.at("omega")[1];
+    v(5) = x0_map.at("omega")[0];
     for (auto i{0};i < model_param_.n_joint_wb;i++) {
-        q(7+i) = x0_map.at("q")[i];
+        q(6+i) = x0_map.at("q")[i];
         v(6+i) = x0_map.at("dq")[i];
     }
-    
+
     // 计算所有动力学项
     // pinocchio::computeAllTerms(pin_model_, pin_data_, q, v);
 
@@ -135,7 +149,7 @@ void quadrupedModel::modelUpdate(std::map<std::string,std::vector<double>> const
         //wb
         J_linear_wb_[i] = J.topRows(3);
         //leg
-        J_linear_leg_[i] = J_linear_wb_[i].block(0, 6+i*3, 3, 3);
+        // J_linear_leg_[i] = J_linear_wb_[i].block(0, 6+i*3, 3, 3);
         //sub       
         int s_idx = (i < model_param_.n_contact? 0 : 2);
         Eigen::MatrixXd J_temp = Eigen::MatrixXd::Zero(3, 12);
@@ -143,29 +157,29 @@ void quadrupedModel::modelUpdate(std::map<std::string,std::vector<double>> const
         J_temp.block(0, 6, 3, 6) = J_linear_wb_[i].block(0, 6+3*s_idx, 3, 6);
         J_linear_sub_[i] = J_temp;
         //submix
-        J_temp = Eigen::MatrixXd::Zero(3, 12);
-        J_temp.block(0, 0, 3, 6) = J_linear_wb_[i].block(0, 0, 3, 6);
-        int start_col = ( (i==0 || i==2)? 6 : 9 );
-        J_temp.block(0, start_col, 3, 3) = J_linear_wb_[i].block(0, 6+i*3, 3, 3);
-        J_linear_submix_[i] = J_temp;
+        // J_temp = Eigen::MatrixXd::Zero(3, 12);
+        // J_temp.block(0, 0, 3, 6) = J_linear_wb_[i].block(0, 0, 3, 6);
+        // int start_col = ( (i==0 || i==2)? 6 : 9 );
+        // J_temp.block(0, start_col, 3, 3) = J_linear_wb_[i].block(0, 6+i*3, 3, 3);
+        // J_linear_submix_[i] = J_temp;
 
         // pinocchio::WORLD
-        Eigen::MatrixXd world_J = Eigen::MatrixXd::Zero(6, pin_model_.nv);
-        pinocchio::getFrameJacobian(pin_model_, pin_data_, frame_id, pinocchio::WORLD, world_J);
-        //wb
-        world_J_linear_wb_[i] = world_J.topRows(3);
-        //leg
-        world_J_linear_leg_[i] = world_J_linear_wb_[i].block(0, 6+i*3, 3, 3);
-        //sub       
-        Eigen::MatrixXd world_J_temp = Eigen::MatrixXd::Zero(3, 12);
-        world_J_temp.block(0, 0, 3, 6) = world_J_linear_wb_[i].block(0, 0, 3, 6);
-        world_J_temp.block(0, 6, 3, 6) = world_J_linear_wb_[i].block(0, 6+3*s_idx, 3, 6);
-        world_J_linear_sub_[i] = world_J_temp;
-        //submix
-        world_J_temp = Eigen::MatrixXd::Zero(3, 12);
-        world_J_temp.block(0, 0, 3, 6) = world_J_linear_wb_[i].block(0, 0, 3, 6);
-        world_J_temp.block(0, start_col, 3, 3) = world_J_linear_wb_[i].block(0, 6+i*3, 3, 3);
-        world_J_linear_submix_[i] = world_J_temp;
+        // Eigen::MatrixXd world_J = Eigen::MatrixXd::Zero(6, pin_model_.nv);
+        // pinocchio::getFrameJacobian(pin_model_, pin_data_, frame_id, pinocchio::WORLD, world_J);
+        // //wb
+        // world_J_linear_wb_[i] = world_J.topRows(3);
+        // //leg
+        // world_J_linear_leg_[i] = world_J_linear_wb_[i].block(0, 6+i*3, 3, 3);
+        // //sub       
+        // Eigen::MatrixXd world_J_temp = Eigen::MatrixXd::Zero(3, 12);
+        // world_J_temp.block(0, 0, 3, 6) = world_J_linear_wb_[i].block(0, 0, 3, 6);
+        // world_J_temp.block(0, 6, 3, 6) = world_J_linear_wb_[i].block(0, 6+3*s_idx, 3, 6);
+        // world_J_linear_sub_[i] = world_J_temp;
+        // //submix
+        // world_J_temp = Eigen::MatrixXd::Zero(3, 12);
+        // world_J_temp.block(0, 0, 3, 6) = world_J_linear_wb_[i].block(0, 0, 3, 6);
+        // world_J_temp.block(0, start_col, 3, 3) = world_J_linear_wb_[i].block(0, 6+i*3, 3, 3);
+        // world_J_linear_submix_[i] = world_J_temp;
     }
 
     // 更新子系统
@@ -232,8 +246,8 @@ void quadrupedModel::updateSubsystem(std::string const &subsystems_name, Eigen::
     // A.block(27, 21, 3, 3) = J_linear_leg_[s_idx+1];
 
     // case 1.3: 使用LOCAL_WORLD_ALIGNED，混合子系统雅可比
-    A.block(24, 12, 3, 12) = J_linear_submix_[s_idx];
-    A.block(27, 12, 3, 12) = J_linear_submix_[s_idx+1];
+    A.block(24, 12, 3, 12) = J_linear_sub_[s_idx];
+    A.block(27, 12, 3, 12) = J_linear_sub_[s_idx+1];
 
     // case 2.1: 使用WORLD，子系统雅可比
     // A.block(24, 12, 3, 12) = world_J_linear_sub_[s_idx];
@@ -247,7 +261,7 @@ void quadrupedModel::updateSubsystem(std::string const &subsystems_name, Eigen::
 
     Eigen::MatrixXd B_temp = inv_M*S; //12*18
     B.block(12, 0, 12, 18) = B_temp;
-    B.block(30, 0, 6, 18)  = B_temp.block(0, 0, 6, 18);
+    B.block(30, 0, 6,  18) = B_temp.block(0, 0, 6, 18);
 
     //离散化
     double dt = 0.02; //dt==loop_dt 或者 dt>loop_dt
@@ -308,7 +322,7 @@ void quadrupedModel::createSelectMatrix(std::string const &subsystems_name, std:
     std::vector<double> contact_cmd = x0_map.at("contact_cmd");
     if (s_idx == 0) {
         for (int idx = 0; idx < 2; ++idx) { 
-            Eigen::MatrixXd J_T = J_linear_submix_[idx].transpose();
+            Eigen::MatrixXd J_T = J_linear_sub_[idx].transpose();
             S.block(0, 6+3*idx, 12, 3) = contact_cmd[idx] * J_T;
 
             // Eigen::MatrixXd J = Eigen::MatrixXd::Zero(3, 12);
@@ -317,7 +331,7 @@ void quadrupedModel::createSelectMatrix(std::string const &subsystems_name, std:
             // S.block(0, 6+3*idx, 12, 3) = contact_cmd[idx] * J.transpose();
         }
         for (int idx = 2; idx < 4; ++idx) { 
-            Eigen::MatrixXd J_T = J_linear_submix_[idx].transpose();
+            Eigen::MatrixXd J_T = J_linear_sub_[idx].transpose();
             S.block(0, 6+3*idx, 6, 3) = (contact_cmd[idx] * J_T).topRows(6);
 
             // Eigen::MatrixXd J = Eigen::MatrixXd::Zero(3, 12);
@@ -327,7 +341,7 @@ void quadrupedModel::createSelectMatrix(std::string const &subsystems_name, std:
 
     } else { //控制输入的顺序一直为u = [tau grf grf_aux]
         for (int idx = 0; idx < 2; ++idx) { 
-            Eigen::MatrixXd J_T = J_linear_submix_[s_idx+idx].transpose();
+            Eigen::MatrixXd J_T = J_linear_sub_[s_idx+idx].transpose();
             S.block(0, 6+3*idx, 12, 3) = contact_cmd[s_idx+idx] * J_T;
 
             // Eigen::MatrixXd J = Eigen::MatrixXd::Zero(3, 12);
@@ -336,7 +350,7 @@ void quadrupedModel::createSelectMatrix(std::string const &subsystems_name, std:
             // S.block(0, 6+3*idx, 12, 3) = contact_cmd[s_idx+idx] * J.transpose();
         }
         for (int idx = 2; idx < 4; ++idx) {
-            Eigen::MatrixXd J_T = J_linear_submix_[idx-s_idx].transpose();
+            Eigen::MatrixXd J_T = J_linear_sub_[idx-s_idx].transpose();
             S.block(0, 6+3*idx, 6, 3) = (contact_cmd[idx-s_idx] * J_T).topRows(6);
 
             // Eigen::MatrixXd J = Eigen::MatrixXd::Zero(3, 12);
