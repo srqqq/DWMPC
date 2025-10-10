@@ -50,7 +50,7 @@ class quadrupedModel {
 
     std::vector<Eigen::MatrixXd> J_linear_wb_; //足端线速度雅可比矩阵
     std::vector<Eigen::MatrixXd> J_linear_sub_; //子系统足端线速度雅可比矩阵
-    // std::vector<Eigen::MatrixXd> J_linear_leg_; //单腿足端线速度雅可比矩阵，维度3*3
+    std::vector<Eigen::MatrixXd> J_linear_leg_; //单腿足端线速度雅可比矩阵，维度3*3
     // std::vector<Eigen::MatrixXd> J_linear_submix_; //足端线速度雅可比矩阵,基座+单腿
 
     // std::vector<Eigen::MatrixXd> world_J_linear_wb_; //world系下的足端线速度雅可比矩阵

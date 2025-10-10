@@ -17,7 +17,7 @@ void quadrupedModel::modelInit(parameter const &model_param) {
 
     J_linear_wb_.resize(model_param_.n_contact_wb);
     J_linear_sub_.resize(model_param_.n_contact_wb);
-    // J_linear_leg_.resize(model_param_.n_contact_wb);
+    J_linear_leg_.resize(model_param_.n_contact_wb);
     // J_linear_submix_.resize(model_param_.n_contact_wb);
 
     // world_J_linear_wb_.resize(model_param_.n_contact_wb);
@@ -149,7 +149,7 @@ void quadrupedModel::modelUpdate(std::map<std::string,std::vector<double>> const
         //wb
         J_linear_wb_[i] = J.topRows(3);
         //leg
-        // J_linear_leg_[i] = J_linear_wb_[i].block(0, 6+i*3, 3, 3);
+        J_linear_leg_[i] = J_linear_wb_[i].block(0, 6+i*3, 3, 3);
         //sub       
         int s_idx = (i < model_param_.n_contact? 0 : 2);
         Eigen::MatrixXd J_temp = Eigen::MatrixXd::Zero(3, 12);
