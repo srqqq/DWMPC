@@ -109,6 +109,7 @@ while True:
     state, reward, is_terminated, is_truncated, info = env.step(action=action)
     timer += 1
     if is_terminated:
+        print("!!!!! mujoco is is_terminated !!!!!")
         pass
         # Do some stuff
     env.render()

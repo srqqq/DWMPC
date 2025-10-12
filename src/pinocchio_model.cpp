@@ -264,7 +264,7 @@ void quadrupedModel::updateSubsystem(std::string const &subsystems_name, Eigen::
     B.block(30, 0, 6,  18) = B_temp.block(0, 0, 6, 18);
 
     //离散化
-    double dt = 0.02; //dt==loop_dt 或者 dt>loop_dt
+    double dt = 0.08; //dt==loop_dt 或者 dt>loop_dt
     Ak_[subsystems_name] = Eigen::MatrixXd::Identity(model_param_.n_state, model_param_.n_state) + A*dt;
     Bk_[subsystems_name] = B*dt;
 

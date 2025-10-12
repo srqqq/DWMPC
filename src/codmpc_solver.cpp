@@ -782,7 +782,7 @@ void codmpcSolver::computeQPmatrices(std::string const &subsystems_name,
     lbAc = Eigen::VectorXd::Zero(constrains_*N);
     ubAc = Eigen::VectorXd::Zero(constrains_*N);
 
-    // 方法1构造约束矩阵，更直观
+    // 方法1构造约束矩阵，更直观 ？？？两种约束方法效果居然不一致？？？
     // for (int k = 0; k < N; ++k) {
     //     Ac.block(k*constrains_, k*m, n_friction_cone_constrain, m) = Ac_friction_cone.block(k*n_friction_cone_constrain, k*m, n_friction_cone_constrain, m);
     //     Ac.block(k*constrains_+n_friction_cone_constrain, k*m, n_noslip_constrain, m) = Ac_noslip.block(k*n_noslip_constrain, k*m, n_noslip_constrain, m);
