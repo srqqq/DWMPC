@@ -14,6 +14,7 @@
 #include "pinocchio/algorithm/frames.hpp"
 #include "pinocchio/algorithm/compute-all-terms.hpp"
 #include "pinocchio/parsers/urdf.hpp"
+#include "urdfdom/urdf_parser/urdf_parser.h"
 
 class parameter
 {   public:
@@ -67,6 +68,7 @@ class quadrupedModel {
     parameter model_param_;
     std::vector<std::string> subsystems_name_list_;
     std::vector<std::string> contact_frame_name_list_wb_;
+    std::vector<std::string> joints_name_list_wb_;
 };
 
 double normalizeAngle(double angle);

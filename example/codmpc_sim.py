@@ -48,12 +48,16 @@ while True:
     qvel = env.mjData.qvel
    
     if timer % (sim_frequency / mpc_frequency) == 0 or timer == 0:
-        env_feet_pos = env.feet_pos('world')
-        env_feet_contact_state = env.feet_contact_state(frame='world', ground_reaction_forces=True)
-        
-        foot_op = np.array([env_feet_pos.FL, env_feet_pos.FR, env_feet_pos.RL, env_feet_pos.RR], order="F")
-        contact_op = np.array([float(env_feet_contact_state[0].FL), float(env_feet_contact_state[0].FR), float(env_feet_contact_state[0].RL), float(env_feet_contact_state[0].RR)])
-        grf_op = np.array([env_feet_contact_state[2].FL, env_feet_contact_state[2].FR, env_feet_contact_state[2].RL, env_feet_contact_state[2].RR], order="F")
+        # env_feet_pos = env.feet_pos('world')
+        # env_feet_contact_state = env.feet_contact_state(frame='world', ground_reaction_forces=True)
+
+        # foot_op = np.array([env_feet_pos.FL, env_feet_pos.FR, env_feet_pos.RL, env_feet_pos.RR], order="F")
+        # contact_op = np.array([float(env_feet_contact_state[0].FL), float(env_feet_contact_state[0].FR), float(env_feet_contact_state[0].RL), float(env_feet_contact_state[0].RR)])
+        # grf_op = np.array([env_feet_contact_state[2].FL, env_feet_contact_state[2].FR, env_feet_contact_state[2].RL, env_feet_contact_state[2].RR], order="F")
+
+        foot_op = np.array([env.feet_pos('world').FL, env.feet_pos('world').FR, env.feet_pos('world').RL, env.feet_pos('world').RR],order="F")
+        contact_op = np.array([float(env.feet_contact_state()[0].FL), float(env.feet_contact_state()[0].FR), float(env.feet_contact_state()[0].RL), float(env.feet_contact_state()[0].RR)])
+        grf_op = np.zeros(12)
 
         quat = np.zeros(4)
         quat[0] = qpos[4]
@@ -109,7 +113,7 @@ while True:
     state, reward, is_terminated, is_truncated, info = env.step(action=action)
     timer += 1
     if is_terminated:
-        print("!!!!! mujoco is is_terminated !!!!!")
+        print("!!!!! mujoco is is_terminated !!!!! timer = ", timer)
         pass
         # Do some stuff
     env.render()

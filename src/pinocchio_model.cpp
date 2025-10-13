@@ -15,6 +15,11 @@ void quadrupedModel::modelInit(parameter const &model_param) {
 
     contact_frame_name_list_wb_ = {"FL_foot", "FR_foot", "RL_foot", "RR_foot"};
 
+    joints_name_list_wb_ = {"FL_hip_joint", "FL_thigh_joint", "FL_calf_joint",
+                            "FR_hip_joint", "FR_thigh_joint", "FR_calf_joint",
+                            "RL_hip_joint", "RL_thigh_joint", "RL_calf_joint",
+                            "RR_hip_joint", "RR_thigh_joint", "RR_calf_joint"};
+
     J_linear_wb_.resize(model_param_.n_contact_wb);
     J_linear_sub_.resize(model_param_.n_contact_wb);
     J_linear_leg_.resize(model_param_.n_contact_wb);
@@ -28,12 +33,27 @@ void quadrupedModel::modelInit(parameter const &model_param) {
     // 设置文件路径
     std::string urdf_filename{"/usr/include/dls2/controllers/dwmpc/urdf/go2.urdf"};
 
+    using joint_pair_t = std::pair<const std::string, std::shared_ptr<::urdf::Joint>>;
+
+    ::urdf::ModelInterfaceSharedPtr urdfTree = ::urdf::parseURDFFile(urdf_filename);
+    if (urdfTree == nullptr) {
+        throw std::invalid_argument("The file " + urdf_filename + " does not contain a valid URDF model!");
+    }
+
+    // remove extraneous joints from urdf
+    ::urdf::ModelInterfaceSharedPtr newModel = std::make_shared<::urdf::ModelInterface>(*urdfTree);
+    for (joint_pair_t& jointPair : newModel->joints_) {
+        if (std::find(joints_name_list_wb_.begin(), joints_name_list_wb_.end(), jointPair.first) == joints_name_list_wb_.end()) {
+            jointPair.second->type = urdf::Joint::FIXED;
+        }
+    }
+
     // add 6 DoF for the floating base
     pinocchio::JointModelComposite jointComposite(2);
     jointComposite.addJoint(pinocchio::JointModelTranslation());
     jointComposite.addJoint(pinocchio::JointModelSphericalZYX());
     // 加载模型
-    pinocchio::urdf::buildModel(urdf_filename, jointComposite, pin_model_);
+    pinocchio::urdf::buildModel(urdfTree, jointComposite, pin_model_);
 
     // 加载模型
     // pinocchio::urdf::buildModel(urdf_filename, pinocchio::JointModelFreeFlyer(), pin_model_);
