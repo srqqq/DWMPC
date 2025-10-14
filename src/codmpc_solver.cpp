@@ -15,6 +15,9 @@ void codmpcSolver::init(const parameter &solver_param)
 
         std::vector<Eigen::VectorXd> u0(solver_param_.N_, Eigen::VectorXd::Zero(solver_param_.n_control));
         u_[name] = u0;
+
+        std::vector<Eigen::VectorXd> x0(solver_param_.N_+1, Eigen::VectorXd::Zero(solver_param_.n_state));
+        x_[name] = x0;
     }
     
     Q_ = Eigen::DiagonalMatrix<double, Eigen::Dynamic>(Eigen::VectorXd::Zero(solver_param_.n_state));
@@ -357,6 +360,13 @@ void codmpcSolver::solve( bool &do_init,
         }
 #endif  
 
+#ifdef USE_HPIPM
+        bool success = hpipmSolve(x0, x0_map, x_ref, u_ref, problem);
+        if (!success) {
+            std::cout << "MPC求解失败！" << std::endl;
+        }
+#endif  
+
 #ifdef DEBUG_MODE
         //记录数据
         if (problem == "front") {
@@ -371,7 +381,13 @@ void codmpcSolver::solve( bool &do_init,
         if (problem == "wb")
             continue;
         // update state from solution
+
+#ifdef USE_HPIPM
+        std::vector<Eigen::VectorXd> &x = x_[problem];
+#else
         std::vector<Eigen::VectorXd> x = quadruped_model_.updatePrediction(x0_[problem], u_[problem], problem);
+#endif
+        
         int n_joints {solver_param_.subsystems_map_joint[problem].size()}; //6
         int counter = 0;
         //update data state
@@ -547,6 +563,182 @@ void codmpcSolver::getData(std::map<std::string,pdata> &data)
 //      // TODO
 //     return;
 // }
+
+#ifdef USE_HPIPM
+
+bool codmpcSolver::hpipmSolve(Eigen::VectorXd const &x0, std::map<std::string,std::vector<double>> const &x0_map,
+                              std::vector<Eigen::VectorXd> const &x_ref,
+                              std::vector<Eigen::VectorXd> const &u_ref,
+                              std::string const &subsystems_name) {
+    // setup QP
+    int s_idx = 0;
+    if (subsystems_name == "front") {
+        s_idx = 0;
+    } else if (subsystems_name == "back") {
+        s_idx = 2;
+    } else {
+        return false;
+    }
+
+    int const &N = solver_param_.N_;
+    int const &nx = solver_param_.n_state;
+    int const &nu = solver_param_.n_control;
+    int const &n_contact_wb = solver_param_.n_contact_wb;
+
+    std::vector<hpipm::OcpQp> qp(N+1);
+
+    // dynamics
+    Eigen::MatrixXd &A = quadruped_model_.Ak_[subsystems_name];
+    Eigen::MatrixXd &B = quadruped_model_.Bk_[subsystems_name];
+    const Eigen::VectorXd b = Eigen::VectorXd::Zero(nx);
+    for (int i=0; i<N; ++i) { //0～N-1
+        qp[i].A = A;
+        qp[i].B = B;
+        qp[i].b = b;
+    }
+
+    // cost
+    Eigen::MatrixXd Q(nx, nx), S(nu, nx), R(nu, nu);
+    Q.setZero(); Q.diagonal() = Q_.diagonal();
+    S.setZero();
+    R.setZero(); R.diagonal() << R_.diagonal();
+    // const Eigen::VectorXd q = - Q * x_ref;
+    // const Eigen::VectorXd r = Eigen::VectorXd::Zero(nu);
+    Eigen::VectorXd q = Eigen::VectorXd::Zero(nx);
+    Eigen::VectorXd r = Eigen::VectorXd::Zero(nu);
+    for (int i=0; i<N; ++i) { //0～N-1
+        q = - Q * x_ref[i];
+        r = - R * u_ref[i];
+        qp[i].Q = Q;
+        qp[i].R = R;
+        qp[i].S = S;
+        qp[i].q = q;
+        qp[i].r = r;
+    }
+    q = - Q * x_ref[N];
+    qp[N].Q = Q;
+    qp[N].q = q;
+
+    // constraints
+    constrains_ = 0;
+
+    /////////////////// constrain 1: foot noslip
+    double const epsilon = 5e-3;
+    int n_noslip_constrain = 2*3;
+    constrains_ += n_noslip_constrain;
+
+    std::vector<double> const contact_cmd = x0_map.at("contact_cmd");
+    Eigen::MatrixXd J_matrix = Eigen::MatrixXd::Zero(n_noslip_constrain, 12);
+    J_matrix.block(0, 0, 3, 12) = contact_cmd[s_idx]*quadruped_model_.J_linear_sub_[s_idx];
+    J_matrix.block(3, 0, 3, 12) = contact_cmd[s_idx+1]*quadruped_model_.J_linear_sub_[s_idx+1];
+    Eigen::MatrixXd J_select = Eigen::MatrixXd::Zero(n_noslip_constrain, nx);
+    J_select.block(0, 12, n_noslip_constrain, 12) = J_matrix;
+    Eigen::VectorXd vec_foot_vel_max = epsilon*Eigen::VectorXd::Ones(n_noslip_constrain);
+    Eigen::VectorXd vec_foot_vel_min = -vec_foot_vel_max;
+
+    //////////////////// constrain 2: friction cone
+    double const mu = 0.5;
+    double const fz_max = 500;
+    double const fz_min = 0;
+    
+    int n_friction_cone_constrain = 4*5;
+    constrains_ += n_friction_cone_constrain;
+    Eigen::MatrixXd friction_matrix_block(5, 3);
+    friction_matrix_block << 1,  0, mu,
+                            -1,  0, mu,
+                             0,  1, mu,
+                             0, -1, mu,
+                             0,  0, 1;
+
+    Eigen::MatrixXd friction_matrix = Eigen::MatrixXd::Zero(n_friction_cone_constrain, nu);
+    for (int i=0; i<n_contact_wb; ++i) {
+        friction_matrix.block(5*i, 6+3*i, 5, 3) = friction_matrix_block;
+    }
+
+    Eigen::VectorXd vec_friction_min(n_friction_cone_constrain);
+    Eigen::VectorXd vec_friction_max(n_friction_cone_constrain);
+    vec_friction_min << 0, 0, 0, 0, fz_min,
+                        0, 0, 0, 0, fz_min,
+                        0, 0, 0, 0, fz_min,
+                        0, 0, 0, 0, fz_min;
+    vec_friction_max << fz_max, fz_max, fz_max, fz_max, fz_max,
+                        fz_max, fz_max, fz_max, fz_max, fz_max,
+                        fz_max, fz_max, fz_max, fz_max, fz_max,
+                        fz_max, fz_max, fz_max, fz_max, fz_max;
+
+    Eigen::MatrixXd C = Eigen::MatrixXd::Zero(constrains_, nx);
+    Eigen::MatrixXd D = Eigen::MatrixXd::Zero(constrains_, nu);
+    Eigen::VectorXd lg = Eigen::VectorXd::Zero(constrains_);
+    Eigen::VectorXd ug = Eigen::VectorXd::Zero(constrains_);
+
+    C.topRows(n_noslip_constrain) = J_select;          // 前 n_c 行对应 Cx 的约束
+    C.bottomRows(n_friction_cone_constrain).setZero(); // 后 n_d 行不涉及 x（对应 Du 的约束）
+    D.topRows(n_noslip_constrain).setZero();           // 前 n_c 行不涉及 u（对应 Cx 的约束）
+    D.bottomRows(n_friction_cone_constrain) = friction_matrix;    // 后 n_d 行对应
+    lg.head(n_noslip_constrain) = vec_foot_vel_min; // 前 n_c 个元素为 lgc
+    lg.tail(n_friction_cone_constrain) = vec_friction_min; // 后 n_d 个元素为 lgd
+    ug.head(n_noslip_constrain) = vec_foot_vel_max; // 前 n_c 个元素为 ugc
+    ug.tail(n_friction_cone_constrain) = vec_friction_max; // 后 n_d 个元素为 ugd
+
+    qp[0].C = Eigen::MatrixXd::Zero(n_friction_cone_constrain, nx);
+    qp[0].D = friction_matrix;  
+    qp[0].lg = vec_friction_min;
+    qp[0].ug = vec_friction_max;
+    for (int i = 1; i < N; ++i) { // 注意：状态1～N，控制输入0~N-1
+        // 设置合并后的约束矩阵
+        qp[i].C = C;  // C_total x + D_total u 的状态部分矩阵
+        qp[i].D = D;  // C_total x + D_total u 的输入部分矩阵
+
+        // 设置合并后的上下界
+        qp[i].lg = lg;      // 总下界：lg <= C_total x + D_total u
+        qp[i].ug = ug;      // 总上界：C_total x + D_total u <= ug
+    }
+    qp[N].C = J_select;
+    qp[N].D = Eigen::MatrixXd::Zero(n_noslip_constrain, nu);  
+    qp[N].lg = vec_foot_vel_min;
+    qp[N].ug = vec_foot_vel_max;
+
+    hpipm::OcpQpIpmSolverSettings solver_settings;
+    solver_settings.mode = hpipm::HpipmMode::SpeedAbs;
+    solver_settings.iter_max = 100;
+    solver_settings.alpha_min = 1e-8;
+    solver_settings.mu0 = 1e2;
+    solver_settings.tol_stat = 1e-04;
+    solver_settings.tol_eq = 1e-04;
+    solver_settings.tol_ineq = 1e-04;
+    solver_settings.tol_comp = 1e-04;
+    solver_settings.reg_prim = 1e-12;
+    solver_settings.warm_start = 0;
+    solver_settings.pred_corr = 1;
+    solver_settings.ric_alg = 0;
+    solver_settings.split_step = 1;
+
+    std::vector<hpipm::OcpQpSolution> solution(N+1);
+    hpipm::OcpQpIpmSolver solver(qp, solver_settings);
+
+    for (int i=0; i<N; ++i) { //热启动部分，TODO
+        solution[i].x = x_[subsystems_name][i];
+        solution[i].u = u_[subsystems_name][i];
+    }
+    solution[N].x = x_[subsystems_name][N];
+
+    auto status = solver.solve(x0, qp, solution); //求解MPC问题
+    if (status == hpipm::HpipmStatus::Success) {
+        // 保存控制和状态序列
+        for (int i = 0; i < N; ++i) {
+            u_[subsystems_name][i] = solution[i].u;
+            x_[subsystems_name][i] = solution[i].x;
+        }
+        x_[subsystems_name][N] = solution[N].x; //状态多一维
+
+        return true;
+    } else {
+        std::cerr << "HPIPM solving failed! Error code: " << status << std::endl;
+    }
+
+    return false;
+}
+#endif
 
 #ifdef USE_QPOASES
 
@@ -810,9 +1002,9 @@ bool codmpcSolver::qpOASESsolve(Eigen::VectorXd const &x0, std::map<std::string,
                                 std::vector<Eigen::VectorXd> const &u_ref,
                                 std::string const &subsystems_name) {
   
-    if(!is_initialized) {
+    if(!is_solver_initialized) {
         qpOASESinit();
-        is_initialized = true;
+        is_solver_initialized = true;
         std::cout << "qpOASES initialized!!!" << std::endl;
     }
   

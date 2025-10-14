@@ -16,11 +16,13 @@ set(CMAKE_CXX_FLAGS "-O3")
 # 添加预处理器定义
 add_definitions(-DCURVES_WITH_PINOCCHIO_SUPPORT)
 add_definitions(-DDEBUG_MODE)
-add_definitions(-DUSE_QPOASES)
 
-if (DEFINED USE_QPOASES)
-    find_package(qpOASES REQUIRED)
-endif()
+# add_definitions(-DUSE_QPOASES)
+# find_package(qpOASES REQUIRED)
+
+add_definitions(-DUSE_HPIPM)
+find_package(hpipm-cpp REQUIRED)
+
 find_package(Eigen3 3.3 REQUIRED NO_MODULE)
 find_package(pybind11 CONFIG REQUIRED)
 find_package(Python3 REQUIRED COMPONENTS Development)
@@ -43,6 +45,7 @@ target_include_directories(${MODULE_LIBRARY_NAME}
 		include
 		# ${CMAKE_CURRENT_SOURCE_DIR}/c_generated_code
 		/opt/openrobots/include
+		${hpipm-cpp_INCLUDE_DIR}
 	# add other include directories here
 )
 target_link_directories(${MODULE_LIBRARY_NAME}
@@ -59,7 +62,8 @@ target_link_libraries(${MODULE_LIBRARY_NAME}
 	yaml-cpp
 	Eigen3::Eigen
 	pinocchio::pinocchio
-	qpOASES
+	# qpOASES
+	hpipm-cpp::hpipm-cpp
 	# add other linked libraries here
 )
 #Add test.cpp as an executable

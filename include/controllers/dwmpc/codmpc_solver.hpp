@@ -21,6 +21,10 @@
 #include "qpOASES.hpp"
 #endif
 
+#ifdef USE_HPIPM
+#include "hpipm-cpp/hpipm-cpp.hpp"
+#endif
+
 class pdata
 {   
     public:
@@ -55,6 +59,13 @@ class codmpcSolver {
         Eigen::DiagonalMatrix<double, Eigen::Dynamic> Q_;
         Eigen::DiagonalMatrix<double, Eigen::Dynamic> R_;
 
+#ifdef USE_HPIPM
+        bool hpipmSolve(Eigen::VectorXd const &x0, std::map<std::string,std::vector<double>> const &x0_map,
+                        std::vector<Eigen::VectorXd> const &x_ref,
+                        std::vector<Eigen::VectorXd> const &u_ref,
+                        std::string const &subsystems_name);
+#endif
+
 #ifdef USE_QPOASES
         // 权重对角矩阵
         Eigen::DiagonalMatrix<double, Eigen::Dynamic> Q_total_;
@@ -80,14 +91,12 @@ class codmpcSolver {
         parameter solver_param_;
         quadrupedModel quadruped_model_;
         std::map<std::string, pdata> data_;
-        std::map<std::string, std::vector<Eigen::VectorXd>> u_;
+        std::map<std::string, std::vector<Eigen::VectorXd>> u_; // 优化结果控制序列
+        std::map<std::string, std::vector<Eigen::VectorXd>> x_; // 优化结果状态序列
         std::map<std::string, Eigen::VectorXd> x0_;
         int constrains_;
+        bool is_solver_initialized{false};
 
-#ifdef USE_QPOASES
-
-        bool is_initialized{false};
-#endif
 #ifdef DEBUG_MODE
         RobotDataLogger logger_front_;
         RobotDataLogger logger_back_;
