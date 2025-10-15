@@ -79,7 +79,6 @@ PYBIND11_MODULE(pydwmpc, m) {
                                                              const double&,
                                                              const Eigen::Ref<const Eigen::Vector4d>&,
                                                              const Eigen::Ref<const Eigen::MatrixXd>&,
-                                                             const Eigen::Ref<const Eigen::MatrixXd>&,
                                                              const Eigen::Ref<const Eigen::VectorXd>&,
                                                              const Eigen::Ref<const Eigen::VectorXd>&,
                                                              const Eigen::Ref<Eigen::Vector4d>&,
@@ -88,7 +87,7 @@ PYBIND11_MODULE(pydwmpc, m) {
                                                              std::vector<double>&,
                                                              std::vector<double>&)>(&controllers::Dwmpc::run),
              py::arg("p"), py::arg("quat"), py::arg("q_op"), py::arg("dp"), py::arg("omega"), py::arg("dq_op"),
-             py::arg("loop_dt"), py::arg("current_contact"), py::arg("grf_op"), py::arg("foot_op"), py::arg("desired_linear_speed"),
+             py::arg("loop_dt"), py::arg("current_contact"), py::arg("foot_op"), py::arg("desired_linear_speed"),
              py::arg("desired_angular_speed"), py::arg("desired_orientation"), py::arg("des_contact"),
              py::arg("des_tau"), py::arg("des_q"), py::arg("des_dq"))
         .def("setWeight", &Dwmpc::setWeight)

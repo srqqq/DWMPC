@@ -190,7 +190,6 @@ namespace controllers
                      const Eigen::Ref<const Eigen::VectorXd> &dq_op,
                      const double &loop_dt,
                      const Eigen::Ref<const Eigen::Vector4d> &current_contact,
-                     const Eigen::Ref<const Eigen::MatrixXd> &grf_op,
                      const Eigen::Ref<const Eigen::MatrixXd> &foot_op,
                      const Eigen::Ref<const Eigen::VectorXd> &desired_linear_speed,
                      const Eigen::Ref<const Eigen::VectorXd> &desired_angular_speed,
@@ -209,7 +208,7 @@ namespace controllers
         std::vector<Eigen::Vector4d> temp_arrow_quat;
         std::vector<double> arrow_length;
         std::vector<double> sphere_radius;
-        run(p,quat_,q_op,dp,omega,dq_op,loop_dt,current_contact,grf_op.transpose(),foot_op.transpose(),desired_linear_speed,desired_angular_speed,desired_orientation_,temp_sphere_pos,temp_sphere_color,sphere_radius,temp_arrow_pos,temp_arrow_color,temp_arrow_quat,arrow_length,des_contact,des_tau,des_q,des_dq);
+        run(p,quat_,q_op,dp,omega,dq_op,loop_dt,current_contact,foot_op.transpose(),desired_linear_speed,desired_angular_speed,desired_orientation_,temp_sphere_pos,temp_sphere_color,sphere_radius,temp_arrow_pos,temp_arrow_color,temp_arrow_quat,arrow_length,des_contact,des_tau,des_q,des_dq);
     }
     void Dwmpc::run(const Eigen::VectorXd &p,
                     const Eigen::Quaterniond &quat,
@@ -219,7 +218,6 @@ namespace controllers
                     const Eigen::VectorXd &dq_op,
                     const double &loop_dt,
                     const Eigen::Vector4d &current_contact,
-                    const Eigen::MatrixXd &grf_op,
                     const Eigen::MatrixXd &foot_op,
                     const Eigen::VectorXd &desired_linear_speed,
                     const Eigen::VectorXd &desired_angular_speed,
