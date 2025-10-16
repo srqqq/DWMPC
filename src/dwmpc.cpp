@@ -595,11 +595,11 @@ namespace controllers
             //set dt
             if(k<3)
             {
-                dt[0] = 0.08;
+                dt[0] = 0.05;
             }
             else
             {
-                dt[0] = 0.08;
+                dt[0] = 0.05;
             }    
 
             dt_vec.push_back(dt);

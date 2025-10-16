@@ -13,8 +13,8 @@ def visualize_robot_data(csv_file_path1, csv_file_path2):
     try:
 
         # title
-        state_title = ['x', 'y', 'z', 'roll', 'pitch', 'yaw', 'q1', 'q2', 'q3', 'q4', 'q5', 'q6', 
-                       'vx', 'vy', 'vz', 'rollrate', 'pitchrate', 'yawrate', 'dq1', 'dq2', 'dq3', 'dq4', 'dq5', 'dq6', 
+        state_title = ['x', 'y', 'z', 'yaw', 'pitch', 'roll', 'q1', 'q2', 'q3', 'q4', 'q5', 'q6', 
+                       'vx', 'vy', 'vz', 'yawrate', 'pitchrate', 'rollrate', 'dq1', 'dq2', 'dq3', 'dq4', 'dq5', 'dq6', 
                        'pfx1', 'pfy1', 'pfz1', 'pfx2', 'pfy2', 'pfz2', 
                        'vx', 'vy', 'vz', 'rollrate', 'pitchrate', 'yawrate',
                        '1']
