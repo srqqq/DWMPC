@@ -125,6 +125,8 @@ namespace controllers
                 
         solver_param.N_ =  config["N_step"].as<int>();
 
+        solver_param.dt =  config["dt"].as<double>();
+
         solver_param.n_contact_wb = n_contact_wb_;
 
         solver_param.n_contact = n_contact_wb_ / config["n_problem"].as<int>();

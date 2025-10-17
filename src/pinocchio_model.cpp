@@ -72,44 +72,6 @@ void quadrupedModel::modelInit(parameter const &model_param) {
 
     std::cout << "quadrupedModel initialized!!!" << std::endl;
 
-    // 1. 基本信息
-    // pinocchio::Model &model = pin_model_;
-    // std::cout << "===== 基本模型信息 =====" << std::endl;
-    // std::cout << "根连杆索引: " << model.getJointId("trunk") << std::endl;
-    // std::cout << "关节总数 (含根连杆): " << model.njoints << std::endl;
-    // std::cout << "配置空间维度 (nq): " << model.nq << std::endl;  // 总自由度（位置）
-    // std::cout << "速度空间维度 (nv): " << model.nv << std::endl;  // 总自由度（速度）
-    // std::cout << "模型中所有连杆名称: " << std::endl;
-    // for (const auto& name : model.names) {
-    //     std::cout << "  - " << name << std::endl;
-    // }
-
-    // // 2. 关节详细信息
-    // std::cout << "\n===== 关节信息 =====" << std::endl;
-    // for (pinocchio::JointIndex jid = 0; jid < model.njoints; ++jid) {
-    //     std::cout << "关节 ID: " << jid << std::endl;
-    //     std::cout << "  名称: " << model.names[jid] << std::endl;
-    //     std::cout << "  类型: " << model.joints[jid].shortname() << std::endl;  // 关节类型（如RX、RY、RZ等）
-    //     std::cout << "  父连杆 ID: " << model.parents[jid] << std::endl;      // 父连杆索引
-    //     std::cout << "  关节位置维度: " << model.joints[jid].nq() << std::endl;  // 该关节的位置自由度
-    //     std::cout << "  关节速度维度: " << model.joints[jid].nv() << std::endl;  // 该关节的速度自由度
-    //     std::cout << "  相对于父连杆的初始变换:\n" << model.jointPlacements[jid].translation() << std::endl;  // 平移部分
-    // }
-
-    // // 3. 连杆惯性信息
-    // std::cout << "\n===== 连杆惯性信息 =====" << std::endl;
-    // for (pinocchio::JointIndex jid = 0; jid < model.njoints; ++jid) {
-    //     const auto& inertia = model.inertias[jid];
-    //     std::cout << "连杆 ID: " << jid << " (对应关节 " << jid << ")" << std::endl;
-    //     std::cout << "  质量: " << inertia.mass() << std::endl;
-    //     std::cout << "  质心位置: " << inertia.lever() << std::endl;  // 相对于关节的质心位置
-    //     std::cout << "  转动惯量矩阵:\n" << inertia.inertia() << std::endl;
-    // }
-
-    // // 打印模型信息（同上）
-    // std::cout << "关节总数: " << model.njoints << std::endl;
-    // std::cout << "配置空间维度: " << model.nq << std::endl;
-
     return;
 }      
 
@@ -258,16 +220,16 @@ void quadrupedModel::updateSubsystem(std::string const &subsystems_name, Eigen::
     A.block(12, 36, 12, 1) = delta;
 
     // case 1.1: 使用LOCAL_WORLD_ALIGNED，子系统雅可比
-    // A.block(24, 12, 3, 12) = J_linear_sub_[s_idx];
-    // A.block(27, 12, 3, 12) = J_linear_sub_[s_idx+1];
+    A.block(24, 12, 3, 12) = J_linear_sub_[s_idx];
+    A.block(27, 12, 3, 12) = J_linear_sub_[s_idx+1];
 
     // case 1.2: 使用LOCAL_WORLD_ALIGNED，单腿雅可比
     // A.block(24, 18, 3, 3) = J_linear_leg_[s_idx]; // 只使用每条腿自己的雅可比矩阵，腿终于能动了！！！
     // A.block(27, 21, 3, 3) = J_linear_leg_[s_idx+1];
 
     // case 1.3: 使用LOCAL_WORLD_ALIGNED，混合子系统雅可比
-    A.block(24, 12, 3, 12) = J_linear_sub_[s_idx];
-    A.block(27, 12, 3, 12) = J_linear_sub_[s_idx+1];
+    // A.block(24, 12, 3, 12) = J_linear_submix_[s_idx];
+    // A.block(27, 12, 3, 12) = J_linear_submix_[s_idx+1];
 
     // case 2.1: 使用WORLD，子系统雅可比
     // A.block(24, 12, 3, 12) = world_J_linear_sub_[s_idx];
@@ -283,15 +245,17 @@ void quadrupedModel::updateSubsystem(std::string const &subsystems_name, Eigen::
     B.block(12, 0, 12, 18) = B_temp;
     B.block(30, 0, 6,  18) = B_temp.block(0, 0, 6, 18);
 
-    //离散化
-    double dt = 0.05; //dt==loop_dt 或者 dt>loop_dt
-    Ak_[subsystems_name] = Eigen::MatrixXd::Identity(model_param_.n_state, model_param_.n_state) + A*dt;
-    Bk_[subsystems_name] = B*dt;
 
-    // std::cout << "M is : " << subsystems_name << std::endl;
-    // debug_print(M);
-    // std::cout << "nle is : " << subsystems_name << std::endl;
-    // debug_print(nle);
+    // 离散化
+    double const &dt = model_param_.dt; //dt==loop_dt 或者 dt>loop_dt
+    // 1. 前向欧拉离散化
+    // Ak_[subsystems_name] = Eigen::MatrixXd::Identity(model_param_.n_state, model_param_.n_state) + A*dt;
+    // Bk_[subsystems_name] = B*dt;
+
+    // 2. 半隐式欧拉法 semi-implicit euler
+    Eigen::MatrixXd Matrix_temp = (Eigen::MatrixXd::Identity(model_param_.n_state, model_param_.n_state)-A*dt).inverse();
+    Ak_[subsystems_name] = Matrix_temp;
+    Bk_[subsystems_name] = Matrix_temp*B*dt;
 
     return;
 }

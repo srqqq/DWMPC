@@ -31,6 +31,7 @@ class parameter
     int N_{};// lenght of the horizon  
     int n_state{};
     int n_control{};
+    double dt{};
 };
 
 class quadrupedModel {
