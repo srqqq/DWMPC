@@ -176,7 +176,9 @@ namespace controllers
         weight_vec_["foot_swing"] = config["weight_foot_swing"].as<std::vector<double>>();
         
         weight_vec_["consensus"] = config["weight_consensus"].as<std::vector<double>>();
-        
+
+        weight_vec_["gamma"] = config["gamma"].as<std::vector<double>>();
+
         timer_.setDelta(config["delta"].as<std::vector<double>>());
         timer_.setParam(config["duty_factor"].as<double>(),config["step_freq"].as<double>());
         timer_.set({0,0,0,0},{true,true,true,true}); 

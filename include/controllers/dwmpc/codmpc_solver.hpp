@@ -58,6 +58,7 @@ class codmpcSolver {
         // void receiveSolverResult();
         Eigen::DiagonalMatrix<double, Eigen::Dynamic> Q_;
         Eigen::DiagonalMatrix<double, Eigen::Dynamic> R_;
+        double gamma_;
 
 #ifdef USE_HPIPM
         bool hpipmSolve(Eigen::VectorXd const &x0, std::map<std::string,std::vector<double>> const &x0_map,

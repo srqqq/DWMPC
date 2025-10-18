@@ -348,6 +348,9 @@ void codmpcSolver::solve( bool &do_init,
                     R_.diagonal()[8+counter] = weight_vec.at("grf")[0];
                     counter+=3;
                 }
+
+                // gamma
+                gamma_ = weight_vec.at("gamma")[0];
             }              
         }
         // pass to the codmpc sovler
@@ -614,6 +617,8 @@ bool codmpcSolver::hpipmSolve(Eigen::VectorXd const &x0, std::map<std::string,st
         qp[i].S = S;
         qp[i].q = q;
         qp[i].r = r;
+        Q *= gamma_;
+        // R *= gamma_;
     }
     q = - Q * x_ref[N];
     qp[N].Q = Q;
