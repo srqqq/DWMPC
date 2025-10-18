@@ -39,7 +39,7 @@ class quadrupedModel {
     public:
     quadrupedModel();
     ~quadrupedModel();
-    void modelInit(parameter const &model_param);
+    void modelInit(parameter const &config_param);
     void modelUpdate(std::map<std::string,std::vector<double>> const &x0_map);
     std::vector<Eigen::VectorXd> updatePrediction(Eigen::VectorXd const &x0,
                                                 std::vector<Eigen::VectorXd> const &u,
@@ -66,7 +66,7 @@ class quadrupedModel {
                          std::map<std::string,std::vector<double>> const &x0_map);
     pinocchio::Model pin_model_;
     pinocchio::Data pin_data_;
-    parameter model_param_;
+    parameter config_param_;
     std::vector<std::string> subsystems_name_list_;
     std::vector<std::string> contact_frame_name_list_wb_;
     std::vector<std::string> joints_name_list_wb_;

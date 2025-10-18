@@ -3,33 +3,33 @@
 codmpcSolver::codmpcSolver()
 {}
 
-void codmpcSolver::init(const parameter &solver_param)
+void codmpcSolver::init(const parameter &config_param)
 {
     std::cout << "codmpcSolver initialization begins..." << std::endl;
 
-    solver_param_ = solver_param;
-    for(auto name : solver_param_.subsystems_name)
+    config_param_ = config_param;
+    for(auto name : config_param_.subsystems_name)
     {
         pdata subsystem_data{};
         data_[name] = subsystem_data; //全部初始化为空
 
-        std::vector<Eigen::VectorXd> u0(solver_param_.N_, Eigen::VectorXd::Zero(solver_param_.n_control));
+        std::vector<Eigen::VectorXd> u0(config_param_.N_, Eigen::VectorXd::Zero(config_param_.n_control));
         u_[name] = u0;
 
-        std::vector<Eigen::VectorXd> x0(solver_param_.N_+1, Eigen::VectorXd::Zero(solver_param_.n_state));
+        std::vector<Eigen::VectorXd> x0(config_param_.N_+1, Eigen::VectorXd::Zero(config_param_.n_state));
         x_[name] = x0;
     }
     
-    Q_ = Eigen::DiagonalMatrix<double, Eigen::Dynamic>(Eigen::VectorXd::Zero(solver_param_.n_state));
-    R_ = Eigen::DiagonalMatrix<double, Eigen::Dynamic>(Eigen::VectorXd::Zero(solver_param_.n_control));
+    Q_ = Eigen::DiagonalMatrix<double, Eigen::Dynamic>(Eigen::VectorXd::Zero(config_param_.n_state));
+    R_ = Eigen::DiagonalMatrix<double, Eigen::Dynamic>(Eigen::VectorXd::Zero(config_param_.n_control));
 
-    quadruped_model_.modelInit(solver_param);
+    quadruped_model_.modelInit(config_param);
 
     std::cout << "codmpcSolver initialized!!!" << std::endl;
 
 #ifdef DEBUG_MODE
-    logger_front_.init("front_data.csv", solver_param_.n_state, solver_param_.n_control);
-    logger_back_.init("back_data.csv", solver_param_.n_state, solver_param_.n_control);
+    logger_front_.init("front_data.csv", config_param_.n_state, config_param_.n_control);
+    logger_back_.init("back_data.csv", config_param_.n_state, config_param_.n_control);
 #endif
 
     return;
@@ -44,7 +44,7 @@ void codmpcSolver::solve( bool &do_init,
     // init data to the reference 
     if (do_init)
     {    
-        for(auto name : solver_param_.subsystems_name) //对所有subsystem初始化
+        for(auto name : config_param_.subsystems_name) //对所有subsystem初始化
         {   
             // init to refernce
             data_[name].p = ref.at("p");
@@ -52,16 +52,16 @@ void codmpcSolver::solve( bool &do_init,
             data_[name].rpy = ref.at("rpy");
             data_[name].dp = ref.at("dp");
             data_[name].omega = ref.at("omega");
-            for (int k{0};k<solver_param_.N_+1;k++)
+            for (int k{0};k<config_param_.N_+1;k++)
             {   
                 std::vector<double> q,dq,tau,grf,foot;
-                for (auto idx : solver_param_.subsystems_map_joint[name])
+                for (auto idx : config_param_.subsystems_map_joint[name])
                 {
                     q.push_back(ref.at("q")[k][idx]);
                     dq.push_back(ref.at("dq")[k][idx]);
                     tau.push_back(ref.at("tau")[k][idx]);
                 }
-                for (auto idx : solver_param_.subsystems_map_contact[name])
+                for (auto idx : config_param_.subsystems_map_contact[name])
                 {
                     grf.push_back(ref.at("grf")[k][3*idx]);
                     grf.push_back(ref.at("grf")[k][3*idx+1]);
@@ -87,7 +87,7 @@ void codmpcSolver::solve( bool &do_init,
     // ============       MODEL       ============
     quadruped_model_.modelUpdate(x0_map); // 放在循环外面
 
-    for (auto problem : solver_param_.subsystems_name)
+    for (auto problem : config_param_.subsystems_name)
     {   
         // if whole body problem skip
         if (problem == "wb")
@@ -96,7 +96,7 @@ void codmpcSolver::solve( bool &do_init,
         int counter = 0;
 
         // ============ INITAIAL CONDITION ============
-        Eigen::VectorXd x0(solver_param_.n_state);
+        Eigen::VectorXd x0(config_param_.n_state);
         
         x0(0) = x0_map.at("p")[0];
         x0(1) = x0_map.at("p")[1];
@@ -110,7 +110,7 @@ void codmpcSolver::solve( bool &do_init,
         // problem_initial_condition.push_back(normalizeAngle(x0_map.at("rpy")[2] - ref.at("rpy")[0][2]));
 
         counter = 0;
-        for(auto idx : solver_param_.subsystems_map_joint[problem]) //循环6次
+        for(auto idx : config_param_.subsystems_map_joint[problem]) //循环6次
         {
             x0(6+counter) = x0_map.at("q")[idx];
             ++counter;
@@ -125,14 +125,14 @@ void codmpcSolver::solve( bool &do_init,
         x0(17) = x0_map.at("omega")[0];
 
         counter=0;
-        for(auto idx : solver_param_.subsystems_map_joint[problem]) //循环6次
+        for(auto idx : config_param_.subsystems_map_joint[problem]) //循环6次
         {
             x0(18+counter) = x0_map.at("dq")[idx];
             ++counter;
         }
         
         counter=0;
-        for (auto idx : solver_param_.subsystems_map_contact[problem]) //循环3*2次
+        for (auto idx : config_param_.subsystems_map_contact[problem]) //循环3*2次
         {
             x0(24+counter) = x0_map.at("foot")[3*idx];
             x0(25+counter) = x0_map.at("foot")[3*idx+1];
@@ -158,9 +158,9 @@ void codmpcSolver::solve( bool &do_init,
         std::vector<Eigen::VectorXd> u_ref;
 
         // horizon loop
-        for (auto k{0};k<solver_param_.N_+1; k++)
+        for (auto k{0};k<config_param_.N_+1; k++)
         {   
-            Eigen::VectorXd x_ref_k(solver_param_.n_state);
+            Eigen::VectorXd x_ref_k(config_param_.n_state);
 
             //set p,quat 
             x_ref_k(0) = ref.at("p")[k][0];
@@ -176,7 +176,7 @@ void codmpcSolver::solve( bool &do_init,
 
             // set q
             counter=0;
-            for(auto idx : solver_param_.subsystems_map_joint[problem]) //循环6次
+            for(auto idx : config_param_.subsystems_map_joint[problem]) //循环6次
             {
                 x_ref_k(6+counter) = ref.at("q")[k][idx];
                 ++counter;
@@ -193,14 +193,14 @@ void codmpcSolver::solve( bool &do_init,
 
             // set dq
             counter=0;
-            for(auto idx : solver_param_.subsystems_map_joint[problem]) //循环6次
+            for(auto idx : config_param_.subsystems_map_joint[problem]) //循环6次
             {
                 x_ref_k(18+counter) = ref.at("dq")[k][idx];
                 ++counter;
             }
             // set foot
             counter=0;
-            for (auto idx : solver_param_.subsystems_map_contact[problem]) //循环2*3次
+            for (auto idx : config_param_.subsystems_map_contact[problem]) //循环2*3次
             {
                 x_ref_k(24+counter) = ref.at("foot")[k][3*idx];
                 x_ref_k(25+counter) = ref.at("foot")[k][3*idx+1];
@@ -221,10 +221,10 @@ void codmpcSolver::solve( bool &do_init,
             x_ref.push_back(x_ref_k);
 
             ////  ============ REFERENCE  U ============
-            Eigen::VectorXd u_ref_k(solver_param_.n_control);
+            Eigen::VectorXd u_ref_k(config_param_.n_control);
             // set tau
             counter=0;
-            for(auto idx : solver_param_.subsystems_map_joint[problem]) //循环6次
+            for(auto idx : config_param_.subsystems_map_joint[problem]) //循环6次
             {
                 u_ref_k(counter) = ref.at("tau")[k][idx];
                 ++counter;
@@ -232,7 +232,7 @@ void codmpcSolver::solve( bool &do_init,
 
             // set grf //这里和原代码不同，我们只优化grf而不是grf_wb，因此只给当前子系统赋值即可
             counter=0;
-            for(auto idx : solver_param_.subsystems_map_contact[problem]) //循环3*2=6次
+            for(auto idx : config_param_.subsystems_map_contact[problem]) //循环3*2=6次
             {
                 u_ref_k(6+counter) = ref.at("grf")[k][3*idx];
                 u_ref_k(7+counter) = ref.at("grf")[k][3*idx+1];
@@ -243,7 +243,7 @@ void codmpcSolver::solve( bool &do_init,
             // set grf aux
             counter=0;
             if (problem == "front") {
-                for(auto idx : solver_param_.subsystems_map_contact["back"]) //循环3*2=6次
+                for(auto idx : config_param_.subsystems_map_contact["back"]) //循环3*2=6次
                 {
                     u_ref_k(12+counter) = ref.at("grf")[k][3*idx];
                     u_ref_k(13+counter) = ref.at("grf")[k][3*idx+1];
@@ -251,7 +251,7 @@ void codmpcSolver::solve( bool &do_init,
                     counter+=3;              
                 }
             } else {
-                for(auto idx : solver_param_.subsystems_map_contact["front"]) //循环3*2=6次
+                for(auto idx : config_param_.subsystems_map_contact["front"]) //循环3*2=6次
                 {
                     u_ref_k(12+counter) = ref.at("grf")[k][3*idx];
                     u_ref_k(13+counter) = ref.at("grf")[k][3*idx+1];
@@ -277,7 +277,7 @@ void codmpcSolver::solve( bool &do_init,
 
                 // weight q
                 counter = 0;
-                for(auto idx : solver_param_.subsystems_map_joint[problem]) // 实际循环6次
+                for(auto idx : config_param_.subsystems_map_joint[problem]) // 实际循环6次
                 {
                     Q_.diagonal()[6+counter] = weight_vec.at("q")[0];
                     counter++;
@@ -295,7 +295,7 @@ void codmpcSolver::solve( bool &do_init,
 
                 // weight dq
                 counter = 0;
-                for(auto idx : solver_param_.subsystems_map_joint[problem]) // 实际循环6次
+                for(auto idx : config_param_.subsystems_map_joint[problem]) // 实际循环6次
                 {
                     Q_.diagonal()[18+counter] = weight_vec.at("dq")[0];
                     counter++;
@@ -303,7 +303,7 @@ void codmpcSolver::solve( bool &do_init,
 
                 // weight foot
                 counter = 0;
-                for(auto idx : solver_param_.subsystems_map_contact[problem]) // 实际循环2*3次
+                for(auto idx : config_param_.subsystems_map_contact[problem]) // 实际循环2*3次
                 {   
                     if (param.at("contact_seq")[k][idx] == 1)
                     {
@@ -333,7 +333,7 @@ void codmpcSolver::solve( bool &do_init,
 
                 // weight tau
                 counter = 0;
-                for(auto idx : solver_param_.subsystems_map_joint[problem]) // 实际循环6次
+                for(auto idx : config_param_.subsystems_map_joint[problem]) // 实际循环6次
                 {
                     R_.diagonal()[counter] = weight_vec.at("tau")[0];
                     counter++;
@@ -341,7 +341,7 @@ void codmpcSolver::solve( bool &do_init,
 
                 // weight grf grf_aux
                 counter = 0;
-                for(auto idx : solver_param_.subsystems_map_contact["wb"])
+                for(auto idx : config_param_.subsystems_map_contact["wb"])
                 {
                     R_.diagonal()[6+counter] = weight_vec.at("grf")[0];
                     R_.diagonal()[7+counter] = weight_vec.at("grf")[0];                            
@@ -379,7 +379,7 @@ void codmpcSolver::solve( bool &do_init,
         } else {}
 #endif
     }     
-    for (auto problem : solver_param_.subsystems_name)
+    for (auto problem : config_param_.subsystems_name)
     {   
         if (problem == "wb")
             continue;
@@ -391,10 +391,10 @@ void codmpcSolver::solve( bool &do_init,
         std::vector<Eigen::VectorXd> x = quadruped_model_.updatePrediction(x0_[problem], u_[problem], problem);
 #endif
         
-        int n_joints {solver_param_.subsystems_map_joint[problem].size()}; //6
+        int n_joints {config_param_.subsystems_map_joint[problem].size()}; //6
         int counter = 0;
         //update data state
-        for (int k{0};k<solver_param_.N_+1;k++)
+        for (int k{0};k<config_param_.N_+1;k++)
         {   
             //p 
             data_[problem].p[k][0] = x[k](0);
@@ -415,7 +415,7 @@ void codmpcSolver::solve( bool &do_init,
 
             //q
             counter = 0;
-            for(auto idx : solver_param_.subsystems_map_joint[problem]) //6个循环
+            for(auto idx : config_param_.subsystems_map_joint[problem]) //6个循环
             {
                 data_["wb"].q[k][idx] = x[k](6+counter);  // data_["wb"]放的是当前及预测状态，但是没放全   
                 counter++;
@@ -433,7 +433,7 @@ void codmpcSolver::solve( bool &do_init,
 
             //dq
             counter = 0;
-            for(auto idx : solver_param_.subsystems_map_joint[problem])  //6个循环
+            for(auto idx : config_param_.subsystems_map_joint[problem])  //6个循环
             {
                 data_["wb"].dq[k][idx] = x[k](18+counter);
                 counter++;
@@ -441,7 +441,7 @@ void codmpcSolver::solve( bool &do_init,
 
             //foot
             counter = 0;
-            for (auto idx : solver_param_.subsystems_map_contact[problem]) //循环2*3次
+            for (auto idx : config_param_.subsystems_map_contact[problem]) //循环2*3次
             {
                 data_["wb"].foot[k][3*idx]   = x[k](24+counter);
                 data_["wb"].foot[k][3*idx+1] = x[k](25+counter);
@@ -452,10 +452,10 @@ void codmpcSolver::solve( bool &do_init,
             // consensus: dp omega 不记录，在下面更新，放在data_["wb"]中而不是data_[problem]中
 
             //control input
-            if (k < solver_param_.N_) {
+            if (k < config_param_.N_) {
                 //tau
                 counter = 0;
-                for(auto idx : solver_param_.subsystems_map_joint[problem])
+                for(auto idx : config_param_.subsystems_map_joint[problem])
                 {
                     data_["wb"].tau[k][idx] = u_[problem][k](counter);
                     counter++;
@@ -463,7 +463,7 @@ void codmpcSolver::solve( bool &do_init,
 
                 //grf
                 counter = 0;
-                for(auto idx : solver_param_.subsystems_map_contact[problem])
+                for(auto idx : config_param_.subsystems_map_contact[problem])
                 {
                     data_["wb"].grf[k][3*idx] = u_[problem][k](n_joints+3*counter);
                     data_["wb"].grf[k][3*idx+1] = u_[problem][k](n_joints+3*counter+1);
@@ -474,7 +474,7 @@ void codmpcSolver::solve( bool &do_init,
         }
     }
     // update whole body speeds
-    for(int k{0};k<solver_param_.N_+1;k++)
+    for(int k{0};k<config_param_.N_+1;k++)
     {
         data_["wb"].dp[k][0] = 0;
         data_["wb"].dp[k][1] = 0;
@@ -484,9 +484,9 @@ void codmpcSolver::solve( bool &do_init,
         data_["wb"].omega[k][1] = 0;
         data_["wb"].omega[k][2] = 0;
 
-        double n{solver_param_.subsystems_name.size()-1}; //n=2
+        double n{config_param_.subsystems_name.size()-1}; //n=2
 
-        for(auto problem : solver_param_.subsystems_name)
+        for(auto problem : config_param_.subsystems_name)
         {
             if (problem == "wb")
                 continue;
@@ -500,13 +500,13 @@ void codmpcSolver::solve( bool &do_init,
         }
     }
     // update dual
-    for(auto problem : solver_param_.subsystems_name)
+    for(auto problem : config_param_.subsystems_name)
     {
         if (problem == "wb")
         {
             continue;
         }
-        for (int k{0};k<solver_param_.N_;k++)
+        for (int k{0};k<config_param_.N_;k++)
         {
             data_[problem].dual[k][0] += (data_[problem].dp[k][0] - data_["wb"].dp[k][0])*weight_vec.at("consensus")[0];
             data_[problem].dual[k][1] += (data_[problem].dp[k][1] - data_["wb"].dp[k][1])*weight_vec.at("consensus")[0];
@@ -522,7 +522,7 @@ void codmpcSolver::solve( bool &do_init,
             data_[problem].residual[k][4] = (data_[problem].omega[k][1] - data_["wb"].omega[k][1]);
             data_[problem].residual[k][5] = (data_[problem].omega[k][2] - data_["wb"].omega[k][2]);
         }
-        // for (int k{0};k<solver_param_.N_;k++)
+        // for (int k{0};k<config_param_.N_;k++)
         // {
         //     data_[problem].dual[k][0] = (data_["front"].dp[k][0] - (data_["back"].dp[k][0]))*weight_vec.at("consensus")[0];
         //     data_[problem].dual[k][1] = (data_["front"].dp[k][1] - (data_["back"].dp[k][1]))*weight_vec.at("consensus")[0];
@@ -583,10 +583,10 @@ bool codmpcSolver::hpipmSolve(Eigen::VectorXd const &x0, std::map<std::string,st
         return false;
     }
 
-    int const &N = solver_param_.N_;
-    int const &nx = solver_param_.n_state;
-    int const &nu = solver_param_.n_control;
-    int const &n_contact_wb = solver_param_.n_contact_wb;
+    int const &N = config_param_.N_;
+    int const &nx = config_param_.n_state;
+    int const &nu = config_param_.n_control;
+    int const &n_contact_wb = config_param_.n_contact_wb;
 
     std::vector<hpipm::OcpQp> qp(N+1);
 
@@ -750,9 +750,9 @@ bool codmpcSolver::hpipmSolve(Eigen::VectorXd const &x0, std::map<std::string,st
 // 构建总权重矩阵 (Q_total和R_total)，预先计算，只算一次
 void codmpcSolver::buildTotalWeightMatrices() {
 
-    int const &N = solver_param_.N_;
-    int const &n = solver_param_.n_state;
-    int const &m = solver_param_.n_control;
+    int const &N = config_param_.N_;
+    int const &n = config_param_.n_state;
+    int const &m = config_param_.n_control;
 
     // Q_total = diag(Q, Q, ..., Q, P)（前N-1个Q，最后1个P）
     Eigen::VectorXd q_total_diag(n*N);
@@ -777,8 +777,8 @@ void codmpcSolver::buildTotalWeightMatrices() {
 // 构造F矩阵: [I; A; A^2; ...; A^N]
 void codmpcSolver::buildFMatrix(Eigen::MatrixXd &F, Eigen::MatrixXd const &A) {
 
-    int const &N = solver_param_.N_;
-    int const &n = solver_param_.n_state;
+    int const &N = config_param_.N_;
+    int const &n = config_param_.n_state;
 
     F = Eigen::MatrixXd::Zero(n*N, n);
 
@@ -795,9 +795,9 @@ void codmpcSolver::buildFMatrix(Eigen::MatrixXd &F, Eigen::MatrixXd const &A) {
 // 构造Phi矩阵
 void codmpcSolver::buildPhiMatrix(Eigen::MatrixXd &Phi, Eigen::MatrixXd const &A, Eigen::MatrixXd const &B) {
 
-    int const &N = solver_param_.N_;
-    int const &n = solver_param_.n_state;
-    int const &m = solver_param_.n_control;
+    int const &N = config_param_.N_;
+    int const &n = config_param_.n_state;
+    int const &m = config_param_.n_control;
 
     Phi = Eigen::MatrixXd::Zero(n*N, m*N);
     
@@ -841,10 +841,10 @@ void codmpcSolver::computeQPmatrices(std::string const &subsystems_name,
     } else {
         return;
     }
-    int const &N = solver_param_.N_;
-    int const &n = solver_param_.n_state;
-    int const &m = solver_param_.n_control;
-    int const &n_contact_wb = solver_param_.n_contact_wb;
+    int const &N = config_param_.N_;
+    int const &n = config_param_.n_state;
+    int const &m = config_param_.n_control;
+    int const &n_contact_wb = config_param_.n_contact_wb;
     int const total_n = n * N;
     int const total_m = m * N;
 
@@ -1014,9 +1014,9 @@ bool codmpcSolver::qpOASESsolve(Eigen::VectorXd const &x0, std::map<std::string,
     }
   
     // 参数设置
-    int const &N = solver_param_.N_;
-    // int const &n = solver_param_.n_state;
-    int const &m = solver_param_.n_control;
+    int const &N = config_param_.N_;
+    // int const &n = config_param_.n_state;
+    int const &m = config_param_.n_control;
     int const c = 6;
 
     // 计算H矩阵和g向量

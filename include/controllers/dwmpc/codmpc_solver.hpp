@@ -45,7 +45,7 @@ class pdata
 class codmpcSolver {
     public:
         codmpcSolver();
-        void init(const parameter &solver_param);
+        void init(const parameter &config_param);
         void solve( bool &do_init,
                     const std::map<std::string,std::vector<double>> &x0_map,
                     const std::map<std::string,std::vector<std::vector<double>>> &ref,
@@ -89,7 +89,7 @@ class codmpcSolver {
                                 std::string const &subsystems_name);
 #endif
     private:
-        parameter solver_param_;
+        parameter config_param_;
         quadrupedModel quadruped_model_;
         std::map<std::string, pdata> data_;
         std::map<std::string, std::vector<Eigen::VectorXd>> u_; // 优化结果控制序列

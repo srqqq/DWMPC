@@ -90,6 +90,8 @@ namespace controllers
         std::cout << "DWMPC initialization begins..." << std::endl;
 
         N_ = config["N_step"].as<int>();
+
+        dt_ = config["dt"].as<double>();
         
         n_joint_wb_ = config["n_joint_wb"].as<int>();
         
@@ -107,39 +109,39 @@ namespace controllers
 
         do_init_ = true;
        
-        parameter solver_param{};
+        parameter config_param{};
 
-        solver_param.max_iteration = config["max_iteration"].as<int>();
+        config_param.max_iteration = config["max_iteration"].as<int>();
         
-        solver_param.n_problem = config["n_problem"].as<int>();
+        config_param.n_problem = config["n_problem"].as<int>();
         
-        solver_param.receding_horizon = config["receding_horizon"].as<bool>();
+        config_param.receding_horizon = config["receding_horizon"].as<bool>();
         
-        solver_param.subsystems_name = config["subsystems_name"].as<std::vector<std::string>>();
+        config_param.subsystems_name = config["subsystems_name"].as<std::vector<std::string>>();
 
-        for(int subsystem{0};subsystem < solver_param.subsystems_name.size();subsystem++)
+        for(int subsystem{0};subsystem < config_param.subsystems_name.size();subsystem++)
         {
-            solver_param.subsystems_map_joint[solver_param.subsystems_name[subsystem]] = config["subsystems_map_joint"][solver_param.subsystems_name[subsystem]].as<std::vector<int>>();
-            solver_param.subsystems_map_contact[solver_param.subsystems_name[subsystem]] = config["subsystems_map_contact"][solver_param.subsystems_name[subsystem]].as<std::vector<int>>();
+            config_param.subsystems_map_joint[config_param.subsystems_name[subsystem]] = config["subsystems_map_joint"][config_param.subsystems_name[subsystem]].as<std::vector<int>>();
+            config_param.subsystems_map_contact[config_param.subsystems_name[subsystem]] = config["subsystems_map_contact"][config_param.subsystems_name[subsystem]].as<std::vector<int>>();
         }
                 
-        solver_param.N_ =  config["N_step"].as<int>();
+        config_param.N_ =  config["N_step"].as<int>();
 
-        solver_param.dt =  config["dt"].as<double>();
+        config_param.dt =  config["dt"].as<double>();
 
-        solver_param.n_contact_wb = n_contact_wb_;
+        config_param.n_contact_wb = n_contact_wb_;
 
-        solver_param.n_contact = n_contact_wb_ / config["n_problem"].as<int>();
+        config_param.n_contact = n_contact_wb_ / config["n_problem"].as<int>();
 
-        solver_param.n_joint_wb = n_joint_wb_;
+        config_param.n_joint_wb = n_joint_wb_;
 
-        solver_param.n_joint = n_joint_wb_ / config["n_problem"].as<int>();
+        config_param.n_joint = n_joint_wb_ / config["n_problem"].as<int>();
 
-        solver_param.n_state = config["n_state"].as<int>();
+        config_param.n_state = config["n_state"].as<int>();
 
-        solver_param.n_control = config["n_control"].as<int>();
+        config_param.n_control = config["n_control"].as<int>();
 
-        ocp_.init(solver_param);
+        ocp_.init(config_param);
 
         // set the desired to default values
 
@@ -239,20 +241,20 @@ namespace controllers
                     std::vector<double> &des_dq)
     {   
         // build the initial condition map
-        std::map<std::string,std::vector<double>> initial_condition;
-        initial_condition["p"] = {p[0],p[1],p[2]};
-        initial_condition["quat"] = {quat.x(),quat.y(),quat.z(),quat.w()};
+        std::map<std::string,std::vector<double>> x0_map;
+        x0_map["p"] = {p[0],p[1],p[2]};
+        x0_map["quat"] = {quat.x(),quat.y(),quat.z(),quat.w()};
         Eigen::Vector3d rpy_init = quatToRPY(quat);
-        initial_condition["rpy"] = {rpy_init(0), rpy_init(1), rpy_init(2)};
-        initial_condition["dp"] = {dp[0],dp[1],dp[2]};
-        initial_condition["omega"] = {omega[0],omega[1],omega[2]};
-        initial_condition["contact"] = {current_contact[0],current_contact[1],current_contact[2],current_contact[3]};
+        x0_map["rpy"] = {rpy_init(0), rpy_init(1), rpy_init(2)};
+        x0_map["dp"] = {dp[0],dp[1],dp[2]};
+        x0_map["omega"] = {omega[0],omega[1],omega[2]};
+        x0_map["contact"] = {current_contact[0],current_contact[1],current_contact[2],current_contact[3]};
         Eigen::Quaterniond desired_quat = desired_orientation;
         //initialize the timer        
         std::vector<double> contact0 {timer_.run(loop_dt)};
         des_contact = contact0;
 
-        initial_condition["contact_cmd"] = contact0;
+        x0_map["contact_cmd"] = contact0;
 
         // reorder_contact(des_contact);
 
@@ -272,8 +274,8 @@ namespace controllers
 
         for (auto i{0};i < n_joint_wb_;i++)
         {
-            initial_condition["q"].push_back(q[i]);
-            initial_condition["dq"].push_back(dq[i]);
+            x0_map["q"].push_back(q[i]);
+            x0_map["dq"].push_back(dq[i]);
         }
 
         Eigen::MatrixXd foot = foot_op;
@@ -283,8 +285,8 @@ namespace controllers
         // Eigen::MatrixXd grf_init = grf_op; //不用传感器反馈值，有问题
         for(int leg=0; leg < n_contact_wb_; ++leg){
             for(int i=0; i<3; ++i) {
-                initial_condition["foot"].push_back(foot(i, leg));
-                // initial_condition["grf"].push_back(grf_init(i, leg));
+                x0_map["foot"].push_back(foot(i, leg));
+                // x0_map["grf"].push_back(grf_init(i, leg));
             }
         }
 
@@ -326,14 +328,14 @@ namespace controllers
         std::map<std::string,std::vector<std::vector<double>>> ref;
         std::map<std::string,std::vector<std::vector<double>>> param;
 
-        setDesiredAndParameter(contact0,foot,initial_condition,ref,param);
+        setDesiredAndParameter(contact0,foot,x0_map,ref,param);
         if(do_sine_wave_)
         {
             sineWave(ref,param);   
         }
         // solve the ocp
         ocp_.solve(do_init_,
-               initial_condition,
+               x0_map,
                ref,
                param,
                weight_vec_);
@@ -481,7 +483,7 @@ namespace controllers
     }
     void Dwmpc::setDesiredAndParameter(const std::vector<double> &contact0,
                                        const Eigen::MatrixXd &foot_op,
-                                       const std::map<std::string,std::vector<double>> &initial_condition,
+                                       const std::map<std::string,std::vector<double>> &x0_map,
                                        std::map<std::string,std::vector<std::vector<double>>> &ref,
                                        std::map<std::string,std::vector<std::vector<double>>> &param)
     {   
@@ -512,7 +514,7 @@ namespace controllers
 
         //initialize the first value of the reference
         // to the initial condition x,y
-        p_k = initial_condition.at("p");
+        p_k = x0_map.at("p");
         
         //use proprioceptive height
         p_k[2] = proprioHeight(desired_.at("robot_height")[0]);
@@ -587,7 +589,7 @@ namespace controllers
             {
                 continue;
             }
-            if(contact0[idx] < 1 && initial_condition.at("contact")[idx]>0 && std::min((t_leg[idx]-timer_.duty_factor)/(1-timer_.duty_factor),1.0) > 0.6)
+            if(contact0[idx] < 1 && x0_map.at("contact")[idx]>0 && std::min((t_leg[idx]-timer_.duty_factor)/(1-timer_.duty_factor),1.0) > 0.6)
             {   
                 // std::cout << "leg " << idx << " time "<< std::min((t_leg[idx]-timer_.duty_factor)/(1-timer_.duty_factor),1.0) << std::endl;
                 early_contact[idx] = true;
@@ -597,14 +599,7 @@ namespace controllers
         for(int k {0}; k<N_+1; k++)
         {   
             //set dt
-            if(k<3)
-            {
-                dt[0] = 0.05;
-            }
-            else
-            {
-                dt[0] = 0.05;
-            }    
+            dt[0] = dt_;
 
             dt_vec.push_back(dt);
             // update the contact state base on the timer
@@ -654,7 +649,7 @@ namespace controllers
                         }
                         //get the yaw from the quaternion
                         // double yaw = std::atan2(2*(desired_.at("quat")[3]*desired_.at("quat")[2] + desired_.at("quat")[0]*desired_.at("quat")[1]), 1 - 2*(desired_.at("quat")[1]*desired_.at("quat")[1] + desired_.at("quat")[2]*desired_.at("quat")[2]));
-                        double yaw = std::atan2(2*(initial_condition.at("quat")[3]*initial_condition.at("quat")[2] + initial_condition.at("quat")[0]*initial_condition.at("quat")[1]), 1 - 2*(initial_condition.at("quat")[1]*initial_condition.at("quat")[1] + initial_condition.at("quat")[2]*initial_condition.at("quat")[2]));
+                        double yaw = std::atan2(2*(x0_map.at("quat")[3]*x0_map.at("quat")[2] + x0_map.at("quat")[0]*x0_map.at("quat")[1]), 1 - 2*(x0_map.at("quat")[1]*x0_map.at("quat")[1] + x0_map.at("quat")[2]*x0_map.at("quat")[2]));
                         std::vector<double> foothold{cos(yaw)*foot0_[3*leg]-sin(yaw)*foot0_[3*leg+1],cos(yaw)*foot0_[3*leg+1] + sin(yaw)*foot0_[3*leg],terrain_height_[leg]-p_k[2]};
                         
                         // foothold[0] += p_k[0];
@@ -664,8 +659,8 @@ namespace controllers
                         foothold[1] += 0.5*(desired_.at("dp")[1]); //+ desired_.at("omega")[2]*(cos(yaw)*foot0_[3*leg]-sin(yaw)*foot0_[3*leg+1]))*timer_.duty_factor*timer_.step_freq;
 
                         //correction with actual speed 
-                        foothold[0] += std::sqrt(desired_.at("robot_height")[0]/9.81)*( initial_condition.at("dp")[0]*cos(yaw) + initial_condition.at("dp")[1]*sin(yaw) - desired_.at("dp")[0]);
-                        foothold[1] += std::sqrt(desired_.at("robot_height")[0]/9.81)*( initial_condition.at("dp")[1]*cos(yaw) - initial_condition.at("dp")[0]*sin(yaw) - desired_.at("dp")[1]);
+                        foothold[0] += std::sqrt(desired_.at("robot_height")[0]/9.81)*( x0_map.at("dp")[0]*cos(yaw) + x0_map.at("dp")[1]*sin(yaw) - desired_.at("dp")[0]);
+                        foothold[1] += std::sqrt(desired_.at("robot_height")[0]/9.81)*( x0_map.at("dp")[1]*cos(yaw) - x0_map.at("dp")[0]*sin(yaw) - desired_.at("dp")[1]);
                         
                         std::vector<Eigen::Vector3d> cp{};
                         bezier_curves_t::curve_constraints_t constraints;
@@ -708,7 +703,7 @@ namespace controllers
                             {
                                 continue;
                             }
-                            double yaw = std::atan2(2*(initial_condition.at("quat")[3]*initial_condition.at("quat")[2] + initial_condition.at("quat")[0]*initial_condition.at("quat")[1]), 1 - 2*(initial_condition.at("quat")[1]*initial_condition.at("quat")[1] + initial_condition.at("quat")[2]*initial_condition.at("quat")[2]));
+                            double yaw = std::atan2(2*(x0_map.at("quat")[3]*x0_map.at("quat")[2] + x0_map.at("quat")[0]*x0_map.at("quat")[1]), 1 - 2*(x0_map.at("quat")[1]*x0_map.at("quat")[1] + x0_map.at("quat")[2]*x0_map.at("quat")[2]));
                             std::vector<double> foothold{cos(yaw)*foot0_[3*leg]-sin(yaw)*foot0_[3*leg+1],cos(yaw)*foot0_[3*leg+1] + sin(yaw)*foot0_[3*leg],terrain_height_[leg]-p_k[2]};
                         
                             // foothold[0] += p_k[0];
@@ -718,8 +713,8 @@ namespace controllers
                             foothold[1] += 0.5*(desired_.at("dp")[1]); //+ desired_.at("omega")[2]*(cos(yaw)*foot0_[3*leg]-sin(yaw)*foot0_[3*leg+1]))*timer_.duty_factor*timer_.step_freq;
 
                             //correction with actual speed 
-                            foothold[0] += std::sqrt(desired_.at("robot_height")[0]/9.81)*( initial_condition.at("dp")[0]*cos(yaw) + initial_condition.at("dp")[1]*sin(yaw) - desired_.at("dp")[0]);
-                            foothold[1] += std::sqrt(desired_.at("robot_height")[0]/9.81)*( initial_condition.at("dp")[1]*cos(yaw) - initial_condition.at("dp")[0]*sin(yaw) - desired_.at("dp")[1]);
+                            foothold[0] += std::sqrt(desired_.at("robot_height")[0]/9.81)*( x0_map.at("dp")[0]*cos(yaw) + x0_map.at("dp")[1]*sin(yaw) - desired_.at("dp")[0]);
+                            foothold[1] += std::sqrt(desired_.at("robot_height")[0]/9.81)*( x0_map.at("dp")[1]*cos(yaw) - x0_map.at("dp")[0]*sin(yaw) - desired_.at("dp")[1]);
                             std::vector<Eigen::Vector3d> cp{};
 
                             bezier_curves_t::curve_constraints_t constraints;

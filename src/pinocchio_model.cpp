@@ -4,14 +4,14 @@ quadrupedModel::quadrupedModel() {}
 
 quadrupedModel::~quadrupedModel() {}
 
-void quadrupedModel::modelInit(parameter const &model_param) {
+void quadrupedModel::modelInit(parameter const &config_param) {
 
     std::cout << "quadrupedModel initialization begins..." << std::endl;
 
     // 参数传递
-    subsystems_name_list_ = model_param.subsystems_name;
+    subsystems_name_list_ = config_param.subsystems_name;
 
-    model_param_ = model_param;
+    config_param_ = config_param;
 
     contact_frame_name_list_wb_ = {"FL_foot", "FR_foot", "RL_foot", "RR_foot"};
 
@@ -20,15 +20,15 @@ void quadrupedModel::modelInit(parameter const &model_param) {
                             "RL_hip_joint", "RL_thigh_joint", "RL_calf_joint",
                             "RR_hip_joint", "RR_thigh_joint", "RR_calf_joint"};
 
-    J_linear_wb_.resize(model_param_.n_contact_wb);
-    J_linear_sub_.resize(model_param_.n_contact_wb);
-    J_linear_leg_.resize(model_param_.n_contact_wb);
-    // J_linear_submix_.resize(model_param_.n_contact_wb);
+    J_linear_wb_.resize(config_param_.n_contact_wb);
+    J_linear_sub_.resize(config_param_.n_contact_wb);
+    J_linear_leg_.resize(config_param_.n_contact_wb);
+    // J_linear_submix_.resize(config_param_.n_contact_wb);
 
-    // world_J_linear_wb_.resize(model_param_.n_contact_wb);
-    // world_J_linear_sub_.resize(model_param_.n_contact_wb);
-    // world_J_linear_leg_.resize(model_param_.n_contact_wb);
-    // world_J_linear_submix_.resize(model_param_.n_contact_wb);
+    // world_J_linear_wb_.resize(config_param_.n_contact_wb);
+    // world_J_linear_sub_.resize(config_param_.n_contact_wb);
+    // world_J_linear_leg_.resize(config_param_.n_contact_wb);
+    // world_J_linear_submix_.resize(config_param_.n_contact_wb);
 
     // 设置文件路径
     std::string urdf_filename{"/usr/include/dls2/controllers/dwmpc/urdf/go2.urdf"};
@@ -66,8 +66,8 @@ void quadrupedModel::modelInit(parameter const &model_param) {
         if (subsystems_name == "wb") {
             continue;
         } 
-        Ak_[subsystems_name] = Eigen::MatrixXd::Zero(model_param_.n_state, model_param_.n_state);
-        Bk_[subsystems_name] = Eigen::MatrixXd::Zero(model_param_.n_state, model_param_.n_control);
+        Ak_[subsystems_name] = Eigen::MatrixXd::Zero(config_param_.n_state, config_param_.n_state);
+        Bk_[subsystems_name] = Eigen::MatrixXd::Zero(config_param_.n_state, config_param_.n_control);
     }
 
     std::cout << "quadrupedModel initialized!!!" << std::endl;
@@ -90,7 +90,7 @@ void quadrupedModel::modelUpdate(std::map<std::string,std::vector<double>> const
     v(3) = x0_map.at("omega")[2];
     v(4) = x0_map.at("omega")[1];
     v(5) = x0_map.at("omega")[0];
-    for (auto i{0};i < model_param_.n_joint_wb;i++) {
+    for (auto i{0};i < config_param_.n_joint_wb;i++) {
         q(6+i) = x0_map.at("q")[i];
         v(6+i) = x0_map.at("dq")[i];
     }
@@ -122,7 +122,7 @@ void quadrupedModel::modelUpdate(std::map<std::string,std::vector<double>> const
     Eigen::MatrixXd inv_jac_R = Eigen::MatrixXd::Identity(3, 3);
 
     //计算雅可比矩阵，用于计算外部力矩和填充模型参数
-    for (size_t i = 0; i < model_param_.n_contact_wb; ++i) {
+    for (size_t i = 0; i < config_param_.n_contact_wb; ++i) {
         int frame_id = pin_model_.getFrameId(contact_frame_name_list_wb_[i]);
 
         // pinocchio::LOCAL_WORLD_ALIGNED
@@ -133,7 +133,7 @@ void quadrupedModel::modelUpdate(std::map<std::string,std::vector<double>> const
         //leg
         J_linear_leg_[i] = J_linear_wb_[i].block(0, 6+i*3, 3, 3);
         //sub       
-        int s_idx = (i < model_param_.n_contact? 0 : 2);
+        int s_idx = (i < config_param_.n_contact? 0 : 2);
         Eigen::MatrixXd J_temp = Eigen::MatrixXd::Zero(3, 12);
         J_temp.block(0, 0, 3, 6) = J_linear_wb_[i].block(0, 0, 3, 6);
         J_temp.block(0, 6, 3, 6) = J_linear_wb_[i].block(0, 6+3*s_idx, 3, 6);
@@ -187,12 +187,12 @@ void quadrupedModel::updateSubsystem(std::string const &subsystems_name, Eigen::
         return;
     }
 
-    int &n_joint = model_param_.n_joint;
-    int &n_contact = model_param_.n_contact;
+    int &n_joint = config_param_.n_joint;
+    int &n_contact = config_param_.n_contact;
 
     //适配子系统的MCG
     Eigen::MatrixXd M = Eigen::MatrixXd::Zero(6+n_joint, 6+n_joint);
-    Eigen::VectorXd nle = Eigen::VectorXd::Zero(6+model_param_.n_joint);
+    Eigen::VectorXd nle = Eigen::VectorXd::Zero(6+config_param_.n_joint);
 
     M.block(0, 0, 6, 6) = M_wb.block(0, 0, 6, 6);  // floating base
     M.block(6, 6, n_joint, n_joint) = M_wb.block(6+3*s_idx, 6+3*s_idx, n_joint, n_joint);
@@ -211,8 +211,8 @@ void quadrupedModel::updateSubsystem(std::string const &subsystems_name, Eigen::
     Eigen::VectorXd delta = inv_M*(-nle);
 
     //连续模型
-    Eigen::MatrixXd A = Eigen::MatrixXd::Zero(model_param_.n_state, model_param_.n_state);
-    Eigen::MatrixXd B = Eigen::MatrixXd::Zero(model_param_.n_state, model_param_.n_control);
+    Eigen::MatrixXd A = Eigen::MatrixXd::Zero(config_param_.n_state, config_param_.n_state);
+    Eigen::MatrixXd B = Eigen::MatrixXd::Zero(config_param_.n_state, config_param_.n_control);
 
     A.block(0, 12, 3, 3)   = Eigen::MatrixXd::Identity(3, 3);
     A.block(3, 15, 3, 3)   = inv_jac_R;
@@ -247,13 +247,13 @@ void quadrupedModel::updateSubsystem(std::string const &subsystems_name, Eigen::
 
 
     // 离散化
-    double const &dt = model_param_.dt; //dt==loop_dt 或者 dt>loop_dt
+    double const &dt = config_param_.dt; //dt==loop_dt 或者 dt>loop_dt
     // 1. 前向欧拉离散化
-    // Ak_[subsystems_name] = Eigen::MatrixXd::Identity(model_param_.n_state, model_param_.n_state) + A*dt;
+    // Ak_[subsystems_name] = Eigen::MatrixXd::Identity(config_param_.n_state, config_param_.n_state) + A*dt;
     // Bk_[subsystems_name] = B*dt;
 
     // 2. 半隐式欧拉法 semi-implicit euler
-    Eigen::MatrixXd Matrix_temp = (Eigen::MatrixXd::Identity(model_param_.n_state, model_param_.n_state)-A*dt).inverse();
+    Eigen::MatrixXd Matrix_temp = (Eigen::MatrixXd::Identity(config_param_.n_state, config_param_.n_state)-A*dt).inverse();
     Ak_[subsystems_name] = Matrix_temp;
     Bk_[subsystems_name] = Matrix_temp*B*dt;
 
@@ -264,7 +264,7 @@ std::vector<Eigen::VectorXd> quadrupedModel::updatePrediction(Eigen::VectorXd co
                                                             std::vector<Eigen::VectorXd> const &u,
                                                             std::string const &subsystems_name) {
 
-    std::vector<Eigen::VectorXd> xtraj(model_param_.N_+1, Eigen::VectorXd::Zero(model_param_.n_state));
+    std::vector<Eigen::VectorXd> xtraj(config_param_.N_+1, Eigen::VectorXd::Zero(config_param_.n_state));
     if (subsystems_name == "wb") {
         return xtraj;
     }
@@ -272,7 +272,7 @@ std::vector<Eigen::VectorXd> quadrupedModel::updatePrediction(Eigen::VectorXd co
     xtraj[0] = x0;
 
     // xtraj.push_back(x0);                                 
-    for(int i=0; i<model_param_.N_; ++i) {
+    for(int i=0; i<config_param_.N_; ++i) {
         xk = Ak_[subsystems_name]*xk + Bk_[subsystems_name]*u[i];
         xk(3) = normalizeAngle(xk(3));
         xk(4) = normalizeAngle(xk(4));
@@ -296,8 +296,8 @@ void quadrupedModel::createSelectMatrix(std::string const &subsystems_name, std:
         return;
     }
     
-    int const &n_joint = model_param_.n_joint;
-    int const &n_contact_wb = model_param_.n_contact_wb;
+    int const &n_joint = config_param_.n_joint;
+    int const &n_contact_wb = config_param_.n_contact_wb;
 
     S = Eigen::MatrixXd::Zero(6 + n_joint, 6 + 3*n_contact_wb);
     

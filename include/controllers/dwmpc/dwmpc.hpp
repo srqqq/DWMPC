@@ -27,7 +27,7 @@ namespace controllers
         ~Dwmpc();
         void setDesiredAndParameter(const std::vector<double> &contact0,
                                     const Eigen::MatrixXd &foot_op,
-                                    const std::map<std::string,std::vector<double>> &initial_condition,
+                                    const std::map<std::string,std::vector<double>> &x0_map,
                                     std::map<std::string,std::vector<std::vector<double>>> &ref,
                                     std::map<std::string,std::vector<std::vector<double>>> &param);
         void run(const Eigen::VectorXd &p,
@@ -101,6 +101,7 @@ namespace controllers
         void reorder_joints(std::vector<double> &joint,const bool in);
         codmpcSolver ocp_;
         int N_;
+        double dt_;
 
         int n_joint_wb_;
         int n_contact_wb_;
