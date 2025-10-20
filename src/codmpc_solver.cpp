@@ -8,16 +8,20 @@ void codmpcSolver::init(const parameter &config_param)
     std::cout << "codmpcSolver initialization begins..." << std::endl;
 
     config_param_ = config_param;
-    for(auto name : config_param_.subsystems_name)
+    for(auto problem : config_param_.subsystems_name)
     {
         pdata subsystem_data{};
-        data_[name] = subsystem_data; //全部初始化为空
+        data_[problem] = subsystem_data; //全部初始化为空
 
         std::vector<Eigen::VectorXd> u0(config_param_.N_, Eigen::VectorXd::Zero(config_param_.n_control));
-        u_[name] = u0;
+        u_[problem] = u0;
+        u_ref_[problem] = u0;
 
         std::vector<Eigen::VectorXd> x0(config_param_.N_+1, Eigen::VectorXd::Zero(config_param_.n_state));
-        x_[name] = x0;
+        x_[problem] = x0;
+        x_ref_[problem] = x0;
+
+        x0_[problem] = Eigen::VectorXd::Zero(config_param_.n_state);
     }
     
     Q_ = Eigen::DiagonalMatrix<double, Eigen::Dynamic>(Eigen::VectorXd::Zero(config_param_.n_state));
@@ -28,8 +32,7 @@ void codmpcSolver::init(const parameter &config_param)
     std::cout << "codmpcSolver initialized!!!" << std::endl;
 
 #ifdef DEBUG_MODE
-    logger_front_.init("front_data.csv", config_param_.n_state, config_param_.n_control);
-    logger_back_.init("back_data.csv", config_param_.n_state, config_param_.n_control);
+    data_logger_.init("quadruped_data.csv");
 #endif
 
     return;
@@ -44,24 +47,24 @@ void codmpcSolver::solve( bool &do_init,
     // init data to the reference 
     if (do_init)
     {    
-        for(auto name : config_param_.subsystems_name) //对所有subsystem初始化
+        for(auto problem : config_param_.subsystems_name) //对所有subsystem初始化
         {   
             // init to refernce
-            data_[name].p = ref.at("p");
-            data_[name].quat = ref.at("quat");
-            data_[name].rpy = ref.at("rpy");
-            data_[name].dp = ref.at("dp");
-            data_[name].omega = ref.at("omega");
+            data_[problem].p = ref.at("p");
+            data_[problem].quat = ref.at("quat");
+            data_[problem].rpy = ref.at("rpy");
+            data_[problem].dp = ref.at("dp");
+            data_[problem].omega = ref.at("omega");
             for (int k{0};k<config_param_.N_+1;k++)
             {   
                 std::vector<double> q,dq,tau,grf,foot;
-                for (auto idx : config_param_.subsystems_map_joint[name])
+                for (auto idx : config_param_.subsystems_map_joint[problem])
                 {
                     q.push_back(ref.at("q")[k][idx]);
                     dq.push_back(ref.at("dq")[k][idx]);
                     tau.push_back(ref.at("tau")[k][idx]);
                 }
-                for (auto idx : config_param_.subsystems_map_contact[name])
+                for (auto idx : config_param_.subsystems_map_contact[problem])
                 {
                     grf.push_back(ref.at("grf")[k][3*idx]);
                     grf.push_back(ref.at("grf")[k][3*idx+1]);
@@ -71,13 +74,13 @@ void codmpcSolver::solve( bool &do_init,
                     foot.push_back(ref.at("foot")[k][3*idx+1]);
                     foot.push_back(ref.at("foot")[k][3*idx+2]);
                 }
-                data_[name].tau.push_back(tau);
-                data_[name].grf.push_back(grf);
-                data_[name].foot.push_back(foot);
-                data_[name].q.push_back(q);
-                data_[name].dq.push_back(dq);
-                data_[name].dual.push_back(std::vector<double>(6,0));
-                data_[name].residual.push_back(std::vector<double>(6,0));
+                data_[problem].tau.push_back(tau);
+                data_[problem].grf.push_back(grf);
+                data_[problem].foot.push_back(foot);
+                data_[problem].q.push_back(q);
+                data_[problem].dq.push_back(dq);
+                data_[problem].dual.push_back(std::vector<double>(6,0));
+                data_[problem].residual.push_back(std::vector<double>(6,0));
             }
         }
     }
@@ -95,16 +98,14 @@ void codmpcSolver::solve( bool &do_init,
 
         int counter = 0;
 
-        // ============ INITAIAL CONDITION ============
-        Eigen::VectorXd x0(config_param_.n_state);
-        
-        x0(0) = x0_map.at("p")[0];
-        x0(1) = x0_map.at("p")[1];
-        x0(2) = x0_map.at("p")[2];
+        // ============ INITAIAL CONDITION ============ 
+        x0_[problem](0) = x0_map.at("p")[0];
+        x0_[problem](1) = x0_map.at("p")[1];
+        x0_[problem](2) = x0_map.at("p")[2];
 
-        x0(3) = normalizeAngle(x0_map.at("rpy")[2]);
-        x0(4) = normalizeAngle(x0_map.at("rpy")[1]);
-        x0(5) = normalizeAngle(x0_map.at("rpy")[0]);
+        x0_[problem](3) = normalizeAngle(x0_map.at("rpy")[2]);
+        x0_[problem](4) = normalizeAngle(x0_map.at("rpy")[1]);
+        x0_[problem](5) = normalizeAngle(x0_map.at("rpy")[0]);
         // problem_initial_condition.push_back(normalizeAngle(x0_map.at("rpy")[0] - ref.at("rpy")[0][0])); // 姿态欧拉角ref设置为0，由于欧拉角有过圈问题，在这里先算好误差
         // problem_initial_condition.push_back(normalizeAngle(x0_map.at("rpy")[1] - ref.at("rpy")[0][1]));
         // problem_initial_condition.push_back(normalizeAngle(x0_map.at("rpy")[2] - ref.at("rpy")[0][2]));
@@ -112,64 +113,57 @@ void codmpcSolver::solve( bool &do_init,
         counter = 0;
         for(auto idx : config_param_.subsystems_map_joint[problem]) //循环6次
         {
-            x0(6+counter) = x0_map.at("q")[idx];
+            x0_[problem](6+counter) = x0_map.at("q")[idx];
             ++counter;
         }
 
-        x0(12) = x0_map.at("dp")[0];
-        x0(13) = x0_map.at("dp")[1];
-        x0(14) = x0_map.at("dp")[2];
+        x0_[problem](12) = x0_map.at("dp")[0];
+        x0_[problem](13) = x0_map.at("dp")[1];
+        x0_[problem](14) = x0_map.at("dp")[2];
 
-        x0(15) = x0_map.at("omega")[2];
-        x0(16) = x0_map.at("omega")[1];
-        x0(17) = x0_map.at("omega")[0];
+        x0_[problem](15) = x0_map.at("omega")[2];
+        x0_[problem](16) = x0_map.at("omega")[1];
+        x0_[problem](17) = x0_map.at("omega")[0];
 
         counter=0;
         for(auto idx : config_param_.subsystems_map_joint[problem]) //循环6次
         {
-            x0(18+counter) = x0_map.at("dq")[idx];
+            x0_[problem](18+counter) = x0_map.at("dq")[idx];
             ++counter;
         }
         
         counter=0;
         for (auto idx : config_param_.subsystems_map_contact[problem]) //循环3*2次
         {
-            x0(24+counter) = x0_map.at("foot")[3*idx];
-            x0(25+counter) = x0_map.at("foot")[3*idx+1];
-            x0(26+counter) = x0_map.at("foot")[3*idx+2];
+            x0_[problem](24+counter) = x0_map.at("foot")[3*idx];
+            x0_[problem](25+counter) = x0_map.at("foot")[3*idx+1];
+            x0_[problem](26+counter) = x0_map.at("foot")[3*idx+2];
             counter+=3;
         }
 
-        x0(30) = data_["wb"].dp[0][0] - data_[problem].dual[0][0]; //！！！这里给consensus的ref。consensus的ref=barw-y，python里再减去w，即r-y
-        x0(31) = data_["wb"].dp[0][1] - data_[problem].dual[0][1];
-        x0(32) = data_["wb"].dp[0][2] - data_[problem].dual[0][2];
-        x0(33) = data_["wb"].omega[0][0] - data_[problem].dual[0][3];
-        x0(34) = data_["wb"].omega[0][1] - data_[problem].dual[0][4];
-        x0(35) = data_["wb"].omega[0][2] - data_[problem].dual[0][5];
+        x0_[problem](30) = data_["wb"].dp[0][0] - data_[problem].dual[0][0]; //！！！这里给consensus的ref。consensus的ref=barw-y，python里再减去w，即r-y
+        x0_[problem](31) = data_["wb"].dp[0][1] - data_[problem].dual[0][1];
+        x0_[problem](32) = data_["wb"].dp[0][2] - data_[problem].dual[0][2];
+        x0_[problem](33) = data_["wb"].omega[0][0] - data_[problem].dual[0][3];
+        x0_[problem](34) = data_["wb"].omega[0][1] - data_[problem].dual[0][4];
+        x0_[problem](35) = data_["wb"].omega[0][2] - data_[problem].dual[0][5];
 
-        x0(36) = 1.0;
-
-        x0_[problem] = x0;
+        x0_[problem](36) = 1.0;
 
         //std::cout << std::endl;
 
         ////  ============ REFERENCE  ============
-        std::vector<Eigen::VectorXd> x_ref;
-        std::vector<Eigen::VectorXd> u_ref;
-
         // horizon loop
         for (auto k{0};k<config_param_.N_+1; k++)
         {   
-            Eigen::VectorXd x_ref_k(config_param_.n_state);
-
             //set p,quat 
-            x_ref_k(0) = ref.at("p")[k][0];
-            x_ref_k(1) = ref.at("p")[k][1];
-            x_ref_k(2) = ref.at("p")[k][2];
+            x_ref_[problem][k](0) = ref.at("p")[k][0];
+            x_ref_[problem][k](1) = ref.at("p")[k][1];
+            x_ref_[problem][k](2) = ref.at("p")[k][2];
 
-            x_ref_k(3) = ref.at("rpy")[k][2];
-            x_ref_k(4) = ref.at("rpy")[k][1];
-            x_ref_k(5) = ref.at("rpy")[k][0];
+            x_ref_[problem][k](3) = ref.at("rpy")[k][2];
+            x_ref_[problem][k](4) = ref.at("rpy")[k][1];
+            x_ref_[problem][k](5) = ref.at("rpy")[k][0];
             // ref_k.push_back(0); // 姿态欧拉角ref设置为0，由于欧拉角有过圈问题，在这里先算好误差
             // ref_k.push_back(0);
             // ref_k.push_back(0);
@@ -178,89 +172,86 @@ void codmpcSolver::solve( bool &do_init,
             counter=0;
             for(auto idx : config_param_.subsystems_map_joint[problem]) //循环6次
             {
-                x_ref_k(6+counter) = ref.at("q")[k][idx];
+                x_ref_[problem][k](6+counter) = ref.at("q")[k][idx];
                 ++counter;
             }
 
             // set dp omega
-            x_ref_k(12) = ref.at("dp")[k][0];
-            x_ref_k(13) = ref.at("dp")[k][1];
-            x_ref_k(14) = ref.at("dp")[k][2];
+            x_ref_[problem][k](12) = ref.at("dp")[k][0];
+            x_ref_[problem][k](13) = ref.at("dp")[k][1];
+            x_ref_[problem][k](14) = ref.at("dp")[k][2];
 
-            x_ref_k(15) = ref.at("omega")[k][2];
-            x_ref_k(16) = ref.at("omega")[k][1];
-            x_ref_k(17) = ref.at("omega")[k][0];
+            x_ref_[problem][k](15) = ref.at("omega")[k][2];
+            x_ref_[problem][k](16) = ref.at("omega")[k][1];
+            x_ref_[problem][k](17) = ref.at("omega")[k][0];
 
             // set dq
             counter=0;
             for(auto idx : config_param_.subsystems_map_joint[problem]) //循环6次
             {
-                x_ref_k(18+counter) = ref.at("dq")[k][idx];
+                x_ref_[problem][k](18+counter) = ref.at("dq")[k][idx];
                 ++counter;
             }
             // set foot
             counter=0;
             for (auto idx : config_param_.subsystems_map_contact[problem]) //循环2*3次
             {
-                x_ref_k(24+counter) = ref.at("foot")[k][3*idx];
-                x_ref_k(25+counter) = ref.at("foot")[k][3*idx+1];
-                x_ref_k(26+counter) = ref.at("foot")[k][3*idx+2];
+                x_ref_[problem][k](24+counter) = ref.at("foot")[k][3*idx];
+                x_ref_[problem][k](25+counter) = ref.at("foot")[k][3*idx+1];
+                x_ref_[problem][k](26+counter) = ref.at("foot")[k][3*idx+2];
                 counter+=3;
             }
             // set consensus
-            x_ref_k(30) = data_["wb"].dp[k][0] - data_[problem].dual[k][0]; //！！！这里给consensus的ref。consensus的ref=barw-y，python里再减去w，即r-y
-            x_ref_k(31) = data_["wb"].dp[k][1] - data_[problem].dual[k][1];
-            x_ref_k(32) = data_["wb"].dp[k][2] - data_[problem].dual[k][2];
+            x_ref_[problem][k](30) = data_["wb"].dp[k][0] - data_[problem].dual[k][0]; //！！！这里给consensus的ref。consensus的ref=barw-y，python里再减去w，即r-y
+            x_ref_[problem][k](31) = data_["wb"].dp[k][1] - data_[problem].dual[k][1];
+            x_ref_[problem][k](32) = data_["wb"].dp[k][2] - data_[problem].dual[k][2];
 
-            x_ref_k(33) = data_["wb"].omega[k][0] - data_[problem].dual[k][3];
-            x_ref_k(34) = data_["wb"].omega[k][1] - data_[problem].dual[k][4];
-            x_ref_k(35) = data_["wb"].omega[k][2] - data_[problem].dual[k][5];
+            x_ref_[problem][k](33) = data_["wb"].omega[k][0] - data_[problem].dual[k][3];
+            x_ref_[problem][k](34) = data_["wb"].omega[k][1] - data_[problem].dual[k][4];
+            x_ref_[problem][k](35) = data_["wb"].omega[k][2] - data_[problem].dual[k][5];
 
-            x_ref_k(36) = 1.0;
-
-            x_ref.push_back(x_ref_k);
+            x_ref_[problem][k](36) = 1.0;
 
             ////  ============ REFERENCE  U ============
-            Eigen::VectorXd u_ref_k(config_param_.n_control);
-            // set tau
-            counter=0;
-            for(auto idx : config_param_.subsystems_map_joint[problem]) //循环6次
-            {
-                u_ref_k(counter) = ref.at("tau")[k][idx];
-                ++counter;
-            }
-
-            // set grf //这里和原代码不同，我们只优化grf而不是grf_wb，因此只给当前子系统赋值即可
-            counter=0;
-            for(auto idx : config_param_.subsystems_map_contact[problem]) //循环3*2=6次
-            {
-                u_ref_k(6+counter) = ref.at("grf")[k][3*idx];
-                u_ref_k(7+counter) = ref.at("grf")[k][3*idx+1];
-                u_ref_k(8+counter) = ref.at("grf")[k][3*idx+2];
-                counter+=3;              
-            }
-
-            // set grf aux
-            counter=0;
-            if (problem == "front") {
-                for(auto idx : config_param_.subsystems_map_contact["back"]) //循环3*2=6次
+            if (k < config_param_.N_) { // u N维
+                // set tau
+                counter=0;
+                for(auto idx : config_param_.subsystems_map_joint[problem]) // 循环6次
                 {
-                    u_ref_k(12+counter) = ref.at("grf")[k][3*idx];
-                    u_ref_k(13+counter) = ref.at("grf")[k][3*idx+1];
-                    u_ref_k(14+counter) = ref.at("grf")[k][3*idx+2];
+                    u_ref_[problem][k](counter) = ref.at("tau")[k][idx];
+                    ++counter;
+                }
+
+                // set grf //这里和原代码不同，我们只优化grf而不是grf_wb，因此只给当前子系统赋值即可
+                counter=0;
+                for(auto idx : config_param_.subsystems_map_contact[problem]) // 循环3*2=6次
+                {
+                    u_ref_[problem][k](6+counter) = ref.at("grf")[k][3*idx];
+                    u_ref_[problem][k](7+counter) = ref.at("grf")[k][3*idx+1];
+                    u_ref_[problem][k](8+counter) = ref.at("grf")[k][3*idx+2];
                     counter+=3;              
                 }
-            } else {
-                for(auto idx : config_param_.subsystems_map_contact["front"]) //循环3*2=6次
-                {
-                    u_ref_k(12+counter) = ref.at("grf")[k][3*idx];
-                    u_ref_k(13+counter) = ref.at("grf")[k][3*idx+1];
-                    u_ref_k(14+counter) = ref.at("grf")[k][3*idx+2];
-                    counter+=3;              
+
+                // set grf aux
+                counter=0;
+                if (problem == "front") {
+                    for(auto idx : config_param_.subsystems_map_contact["back"]) // 循环3*2=6次
+                    {
+                        u_ref_[problem][k](12+counter) = ref.at("grf")[k][3*idx];
+                        u_ref_[problem][k](13+counter) = ref.at("grf")[k][3*idx+1];
+                        u_ref_[problem][k](14+counter) = ref.at("grf")[k][3*idx+2];
+                        counter+=3;              
+                    }
+                } else {
+                    for(auto idx : config_param_.subsystems_map_contact["front"]) // 循环3*2=6次
+                    {
+                        u_ref_[problem][k](12+counter) = ref.at("grf")[k][3*idx];
+                        u_ref_[problem][k](13+counter) = ref.at("grf")[k][3*idx+1];
+                        u_ref_[problem][k](14+counter) = ref.at("grf")[k][3*idx+2];
+                        counter+=3;              
+                    }
                 }
             }
-
-            u_ref.push_back(u_ref_k);
 
             ////  ============ WEIGHT  ============                
             if(do_init) //本来是每个预测step都有一个权重，这里就不改了
@@ -357,27 +348,19 @@ void codmpcSolver::solve( bool &do_init,
         // sendSolverData(problem_ref, x0, data_["wb"].tau[0]);  
         // receiveSolverResult();
 #ifdef USE_QPOASES 
-        bool success = qpOASESsolve(x0, x0_map, x_ref, u_ref, problem);
+        bool success = qpOASESsolve(x0, x0_map, x_ref_, u_ref, problem);
         if (!success) {
             std::cout << "MPC求解失败！" << std::endl;
         }
 #endif  
 
 #ifdef USE_HPIPM
-        bool success = hpipmSolve(x0, x0_map, x_ref, u_ref, problem);
+        bool success = hpipmSolve(x0_map, problem);
         if (!success) {
             std::cout << "MPC求解失败！" << std::endl;
         }
 #endif  
 
-#ifdef DEBUG_MODE
-        //记录数据
-        if (problem == "front") {
-            logger_front_.logData(x0, x_ref[0], u_[problem][0], u_ref[0]);
-        } else if (problem == "back") {
-            logger_back_.logData(x0, x_ref[0], u_[problem][0], u_ref[0]);
-        } else {}
-#endif
     }     
     for (auto problem : config_param_.subsystems_name)
     {   
@@ -470,7 +453,7 @@ void codmpcSolver::solve( bool &do_init,
                     data_["wb"].grf[k][3*idx+2] = u_[problem][k](n_joints+3*counter+2);
                     counter++;
                 }
-            }       
+            }
         }
     }
     // update whole body speeds
@@ -534,6 +517,10 @@ void codmpcSolver::solve( bool &do_init,
     }
     // check stopping criteria
     //TODO
+#ifdef DEBUG_MODE
+    data_logger_.logData(x0_, x_ref_, u_, u_ref_);
+#endif
+
     do_init = false;
 }
 
@@ -569,9 +556,7 @@ void codmpcSolver::getData(std::map<std::string,pdata> &data)
 
 #ifdef USE_HPIPM
 
-bool codmpcSolver::hpipmSolve(Eigen::VectorXd const &x0, std::map<std::string,std::vector<double>> const &x0_map,
-                              std::vector<Eigen::VectorXd> const &x_ref,
-                              std::vector<Eigen::VectorXd> const &u_ref,
+bool codmpcSolver::hpipmSolve(std::map<std::string,std::vector<double>> const &x0_map,
                               std::string const &subsystems_name) {
     // setup QP
     int s_idx = 0;
@@ -587,6 +572,9 @@ bool codmpcSolver::hpipmSolve(Eigen::VectorXd const &x0, std::map<std::string,st
     int const &nx = config_param_.n_state;
     int const &nu = config_param_.n_control;
     int const &n_contact_wb = config_param_.n_contact_wb;
+    Eigen::VectorXd const &x0 = x0_[subsystems_name];
+    std::vector<Eigen::VectorXd> const &x_ref = x_ref_[subsystems_name];
+    std::vector<Eigen::VectorXd> const &u_ref = u_ref_[subsystems_name];
 
     std::vector<hpipm::OcpQp> qp(N+1);
 

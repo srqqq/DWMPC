@@ -61,9 +61,7 @@ class codmpcSolver {
         double gamma_;
 
 #ifdef USE_HPIPM
-        bool hpipmSolve(Eigen::VectorXd const &x0, std::map<std::string,std::vector<double>> const &x0_map,
-                        std::vector<Eigen::VectorXd> const &x_ref,
-                        std::vector<Eigen::VectorXd> const &u_ref,
+        bool hpipmSolve(std::map<std::string,std::vector<double>> const &x0_map,
                         std::string const &subsystems_name);
 #endif
 
@@ -94,13 +92,15 @@ class codmpcSolver {
         std::map<std::string, pdata> data_;
         std::map<std::string, std::vector<Eigen::VectorXd>> u_; // 优化结果控制序列
         std::map<std::string, std::vector<Eigen::VectorXd>> x_; // 优化结果状态序列
-        std::map<std::string, Eigen::VectorXd> x0_;
+        std::map<std::string, Eigen::VectorXd> x0_; //初始状态
+        std::map<std::string, std::vector<Eigen::VectorXd>> x_ref_; // 参考状态序列
+        std::map<std::string, std::vector<Eigen::VectorXd>> u_ref_; // 参考输入序列
+
         int constrains_;
         bool is_solver_initialized{false};
 
 #ifdef DEBUG_MODE
-        RobotDataLogger logger_front_;
-        RobotDataLogger logger_back_;
+        RobotDataLogger data_logger_;
 #endif
 };
 

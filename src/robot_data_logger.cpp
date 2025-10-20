@@ -1,6 +1,4 @@
 #include "controllers/dwmpc/robot_data_logger.hpp"
-#include <stdexcept>
-#include <iostream>
 
 RobotDataLogger::RobotDataLogger() {}
 
@@ -11,11 +9,12 @@ RobotDataLogger::~RobotDataLogger() {
     }
 }
 
-void RobotDataLogger::init(std::string const &filename, int const &nx, int const &nu) {
+void RobotDataLogger::init(std::string const &filename) {
 
     filename_ = filename;
-    nx_ = nx;
-    nu_ = nu;
+    subsystems_name_ = {"front", "back"};
+    nx_ = 37;
+    nu_ = 18;
     is_first_write_ = true;
 
     // 尝试打开文件
@@ -29,13 +28,8 @@ void RobotDataLogger::init(std::string const &filename, int const &nx, int const
     return;
 }
 
-bool RobotDataLogger::logData(Eigen::VectorXd const &x, Eigen::VectorXd const &x_ref, 
-                              Eigen::VectorXd const &u, Eigen::VectorXd const &u_ref) {
-    // 检查向量维度是否正确
-    // if (x.size() != 37 || x_ref.size() != 37 || u.size() != 18) {
-    //     std::cerr << "状态或控制输入维度不正确! 期望: 状态37维, 控制输入18维" << std::endl;
-    //     return false;
-    // }
+bool RobotDataLogger::logData(std::map<std::string, Eigen::VectorXd> const &x, std::map<std::string, std::vector<Eigen::VectorXd>> const &x_ref, 
+                              std::map<std::string, std::vector<Eigen::VectorXd>> const &u, std::map<std::string, std::vector<Eigen::VectorXd>> const &u_ref) {
 
     // 计算时间
     std::chrono::duration<double> duration = std::chrono::high_resolution_clock::now() - time_start_;
@@ -45,52 +39,58 @@ bool RobotDataLogger::logData(Eigen::VectorXd const &x, Eigen::VectorXd const &x
     if (is_first_write_) {
         file_ << "Time";
         
-        // 当前状态标题
-        for (int i = 0; i < nx_; ++i) {
-            file_ << ",x_" << i;
-        }
-        
-        // 参考状态标题
-        for (int i = 0; i < nx_; ++i) {
-            file_ << ",x_ref_" << i;
-        }
-        
-        // 控制输入标题
-        for (int i = 0; i < nu_; ++i) {
-            file_ << ",u_" << i;
-        }
+        for(auto problem : subsystems_name_) {
+            std::string str = "," + problem + "_";
 
-        // 参考输入标题
-        for (int i = 0; i < nu_; ++i) {
-            file_ << ",u_ref_" << i;
+            // 当前状态标题
+            for (int i = 0; i < nx_; ++i) {
+                file_ << str + "x_" << i;
+            }
+            
+            // 参考状态标题
+            for (int i = 0; i < nx_; ++i) {
+                file_ <<  str + "x_ref_" << i;
+            }
+            
+            // 控制输入标题
+            for (int i = 0; i < nu_; ++i) {
+                file_ <<  str + "u_" << i;
+            }
+
+            // 参考输入标题
+            for (int i = 0; i < nu_; ++i) {
+                file_ <<  str + "u_ref_" << i;
+            }
         }
-        
         file_ << std::endl;
         is_first_write_ = false;
     }
     
     // 写入时间
-    file_ << time;
-    
+    file_ << time; 
+
     // 写入当前状态
-    for (int i = 0; i < nx_; ++i) {
-        file_ << "," << x[i];
+    for(auto problem : subsystems_name_) {
+
+        for (int i = 0; i < nx_; ++i) {
+            file_ << "," << x.at(problem)(i);
+        }
+        
+        // 写入参考状态
+        for (int i = 0; i < nx_; ++i) {
+            file_ << "," << x_ref.at(problem)[0](i);
+        }
+        
+        // 写入控制输入
+        for (int i = 0; i < nu_; ++i) {
+            file_ << "," << u.at(problem)[0](i);
+        }
+        
+        // 写入参考输入
+        for (int i = 0; i < nu_; ++i) {
+            file_ << "," << u_ref.at(problem)[0](i);
+        }
     }
-    
-    // 写入参考状态
-    for (int i = 0; i < nx_; ++i) {
-        file_ << "," << x_ref[i];
-    }
-    
-    // 写入控制输入
-    for (int i = 0; i < nu_; ++i) {
-        file_ << "," << u[i];
-    }
-    
-    // 写入参考输入
-    for (int i = 0; i < nu_; ++i) {
-        file_ << "," << u_ref[i];
-    }    
     file_ << std::endl;
     
     // 检查写入是否成功

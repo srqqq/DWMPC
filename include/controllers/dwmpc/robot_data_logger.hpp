@@ -1,10 +1,14 @@
 #ifndef ROBOT_DATA_LOGGER_H
 #define ROBOT_DATA_LOGGER_H
 
+#include <iostream>
 #include <fstream>
 #include <string>
 #include <Eigen/Dense>
 #include <chrono>
+#include <stdexcept>
+#include <vector>
+#include <map>
 
 class RobotDataLogger {
 
@@ -24,11 +28,11 @@ public:
     RobotDataLogger& operator=(RobotDataLogger&&) = default;
     
     // 记录数据到CSV文件
-    bool logData(Eigen::VectorXd const &x, Eigen::VectorXd const &x_ref, 
-                 Eigen::VectorXd const &u, Eigen::VectorXd const &u_ref);
+    bool logData(std::map<std::string, Eigen::VectorXd> const &x, std::map<std::string, std::vector<Eigen::VectorXd>> const &x_ref, 
+                 std::map<std::string, std::vector<Eigen::VectorXd>> const &u, std::map<std::string, std::vector<Eigen::VectorXd>> const &u_ref);
 
     // 新增的初始化函数
-    void init(std::string const &filename, int const &nx, int const &nu);
+    void init(std::string const &filename);
 
 private:
     std::ofstream file_;
@@ -37,6 +41,7 @@ private:
     std::chrono::time_point<std::chrono::high_resolution_clock> time_start_;
     int nx_;
     int nu_;
+    std::vector<std::string> subsystems_name_;
 };
 
 #endif // ROBOT_DATA_LOGGER_H
