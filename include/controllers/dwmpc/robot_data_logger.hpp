@@ -28,8 +28,12 @@ public:
     RobotDataLogger& operator=(RobotDataLogger&&) = default;
     
     // 记录数据到CSV文件
-    bool logData(std::map<std::string, Eigen::VectorXd> const &x, std::map<std::string, std::vector<Eigen::VectorXd>> const &x_ref, 
-                 std::map<std::string, std::vector<Eigen::VectorXd>> const &u, std::map<std::string, std::vector<Eigen::VectorXd>> const &u_ref);
+    bool logData(std::map<std::string, Eigen::VectorXd> const &x, 
+        std::map<std::string, std::vector<Eigen::VectorXd>> const &x_ref, 
+        std::map<std::string, std::vector<Eigen::VectorXd>> const &u, 
+        std::map<std::string, std::vector<Eigen::VectorXd>> const &u_ref,
+        std::vector<double> const &residual_l2_norm_time,
+        double const &solver_time_wb);
 
     // 新增的初始化函数
     void init(std::string const &filename);

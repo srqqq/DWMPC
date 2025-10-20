@@ -28,8 +28,12 @@ void RobotDataLogger::init(std::string const &filename) {
     return;
 }
 
-bool RobotDataLogger::logData(std::map<std::string, Eigen::VectorXd> const &x, std::map<std::string, std::vector<Eigen::VectorXd>> const &x_ref, 
-                              std::map<std::string, std::vector<Eigen::VectorXd>> const &u, std::map<std::string, std::vector<Eigen::VectorXd>> const &u_ref) {
+bool RobotDataLogger::logData(std::map<std::string, Eigen::VectorXd> const &x, 
+    std::map<std::string, std::vector<Eigen::VectorXd>> const &x_ref, 
+    std::map<std::string, std::vector<Eigen::VectorXd>> const &u, 
+    std::map<std::string, std::vector<Eigen::VectorXd>> const &u_ref,
+    std::vector<double> const &residual_l2_norm_time,
+    double const &solver_time_wb) {
 
     // 计算时间
     std::chrono::duration<double> duration = std::chrono::high_resolution_clock::now() - time_start_;
@@ -61,7 +65,13 @@ bool RobotDataLogger::logData(std::map<std::string, Eigen::VectorXd> const &x, s
             for (int i = 0; i < nu_; ++i) {
                 file_ <<  str + "u_ref_" << i;
             }
+
+            // 残差l2 nrom
+            file_ <<  str + "residual_l2_norm_time";
         }
+
+        // 求解时间
+        file_ << ",solver_time_wb";
         file_ << std::endl;
         is_first_write_ = false;
     }
@@ -69,13 +79,14 @@ bool RobotDataLogger::logData(std::map<std::string, Eigen::VectorXd> const &x, s
     // 写入时间
     file_ << time; 
 
+    int idx = 0;
     // 写入当前状态
     for(auto problem : subsystems_name_) {
 
         for (int i = 0; i < nx_; ++i) {
             file_ << "," << x.at(problem)(i);
         }
-        
+
         // 写入参考状态
         for (int i = 0; i < nx_; ++i) {
             file_ << "," << x_ref.at(problem)[0](i);
@@ -90,14 +101,22 @@ bool RobotDataLogger::logData(std::map<std::string, Eigen::VectorXd> const &x, s
         for (int i = 0; i < nu_; ++i) {
             file_ << "," << u_ref.at(problem)[0](i);
         }
+
+        // 残差l2 nrom
+        file_ << "," << residual_l2_norm_time[idx];
+
+        idx++;
     }
+
+    // 求解时间
+    file_ << "," << solver_time_wb;
     file_ << std::endl;
-    
+
     // 检查写入是否成功
     if (file_.fail()) {
         std::cerr << "数据写入失败!" << std::endl;
         return false;
     }
-    
+
     return true;
 }

@@ -66,6 +66,7 @@ class codmpcSolver {
 #endif
 
 #ifdef USE_QPOASES
+        bool is_solver_initialized{false};
         // 权重对角矩阵
         Eigen::DiagonalMatrix<double, Eigen::Dynamic> Q_total_;
         Eigen::DiagonalMatrix<double, Eigen::Dynamic> R_total_;
@@ -97,7 +98,10 @@ class codmpcSolver {
         std::map<std::string, std::vector<Eigen::VectorXd>> u_ref_; // 参考输入序列
 
         int constrains_;
-        bool is_solver_initialized{false};
+        std::vector<double> solver_time_;
+        double solver_time_wb_;
+
+        double calculateL2Norm(std::vector<double> const &vec);
 
 #ifdef DEBUG_MODE
         RobotDataLogger data_logger_;

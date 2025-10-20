@@ -80,6 +80,23 @@ def visualize_robot_data(csv_file_path):
                 axs[i].yaxis.set_major_locator(MaxNLocator(4))  # 限制y轴刻度数量
                 axs[i].tick_params(axis='both', which='major', labelsize=7)
 
+
+        # solver data
+        fig, axs = plt.subplots(2, 1, figsize=(20, 24))
+        fig.suptitle('solver data', fontsize=20, y=0.99)
+        axs = axs.flatten()  # 将子图数组展平以便迭代
+
+        axs[0].plot(time, df[f'front_residual_l2_norm_time'], label=f'front_residual_l2_norm', linewidth=1.5)
+        axs[0].plot(time, df[f'back_residual_l2_norm_time'], label=f'back_residual_l2_norm', linestyle='--', linewidth=1.5)
+        axs[0].set_title('residual_l2_norm', fontsize=10)
+        axs[0].legend(fontsize=8)
+        axs[0].tick_params(axis='both', which='major', labelsize=7)
+
+        axs[1].plot(time, df[f'solver_time_wb'], label=f'solver_time_wb', linewidth=1.5)
+        axs[1].set_title('solver_time_wb', fontsize=10)
+        axs[1].legend(fontsize=8)
+        axs[1].tick_params(axis='both', which='major', labelsize=7)        
+
         print("图形创建完成，显示图形...")
         plt.show()
    

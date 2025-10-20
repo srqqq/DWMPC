@@ -29,6 +29,9 @@ void codmpcSolver::init(const parameter &config_param)
 
     quadruped_model_.modelInit(config_param);
 
+    solver_time_ = std::vector<double>(2, 0.0);
+    solver_time_wb_ = 0.0;
+
     std::cout << "codmpcSolver initialized!!!" << std::endl;
 
 #ifdef DEBUG_MODE
@@ -354,6 +357,7 @@ void codmpcSolver::solve( bool &do_init,
         }
 #endif  
 
+
 #ifdef USE_HPIPM
         bool success = hpipmSolve(x0_map, problem);
         if (!success) {
@@ -361,7 +365,8 @@ void codmpcSolver::solve( bool &do_init,
         }
 #endif  
 
-    }     
+    }
+
     for (auto problem : config_param_.subsystems_name)
     {   
         if (problem == "wb")
@@ -518,7 +523,11 @@ void codmpcSolver::solve( bool &do_init,
     // check stopping criteria
     //TODO
 #ifdef DEBUG_MODE
-    data_logger_.logData(x0_, x_ref_, u_, u_ref_);
+    std::vector<double> residual_l2_norm_time;
+    residual_l2_norm_time.push_back(calculateL2Norm(data_["front"].residual[0]));
+    residual_l2_norm_time.push_back(calculateL2Norm(data_["back"].residual[0]));
+
+    data_logger_.logData(x0_, x_ref_, u_, u_ref_, residual_l2_norm_time, solver_time_wb_);
 #endif
 
     do_init = false;
@@ -539,6 +548,14 @@ void codmpcSolver::getControl(std::vector<double> &des_q,std::vector<double> &de
 void codmpcSolver::getData(std::map<std::string,pdata> &data)
 {  
     data = data_;
+}
+
+double codmpcSolver::calculateL2Norm(std::vector<double> const &vec) {
+    double sumOfSquares = 0.0;
+    for (const auto& element : vec) {
+        sumOfSquares += element*element;
+    }
+    return std::sqrt(sumOfSquares);
 }
 
 // void codmpcSolver::sendSolverData(std::vector<std::vector<double>> const &reference, std::vector<double> const &initial_condition, std::vector<double> const &u0_init) {
@@ -715,7 +732,16 @@ bool codmpcSolver::hpipmSolve(std::map<std::string,std::vector<double>> const &x
     }
     solution[N].x = x_[subsystems_name][N];
 
+    std::chrono::time_point<std::chrono::high_resolution_clock> time_start = std::chrono::high_resolution_clock::now(); // 记录求解开始时间
     auto status = solver.solve(x0, qp, solution); //求解MPC问题
+    std::chrono::duration<double> duration = std::chrono::high_resolution_clock::now() - time_start;
+    if (subsystems_name == "front") {
+        solver_time_[0] = duration.count();
+    } else if (subsystems_name == "back") {
+        solver_time_[1] = duration.count();
+        solver_time_wb_ = solver_time_[0] + solver_time_[1];
+    }
+
     if (status == hpipm::HpipmStatus::Success) {
         // 保存控制和状态序列
         for (int i = 0; i < N; ++i) {
