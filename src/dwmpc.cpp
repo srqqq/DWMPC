@@ -148,7 +148,9 @@ namespace controllers
         desired_["robot_height"] = config["robot_height"].as<std::vector<double>>();
         
         desired_["step_height"] = config["step_height"].as<std::vector<double>>();
-        
+
+        desired_["p"] = std::vector<double>(3,0);
+
         desired_["quat"] = config["quat"].as<std::vector<double>>();
 
         desired_["rpy"] = std::vector<double>(3,0);
@@ -308,22 +310,64 @@ namespace controllers
         // Eigen::Vector3d desired_rpy = quatToRPY(desired_orientation);
         // Eigen::Quaterniond rotated_desired_orientation = rpyToquat(Eigen::Vector3d(desired_rpy[0],desired_rpy[1],rpy[2]));
 
-        desired_["quat"][0] = 0;
-        desired_["quat"][1] = 0;
-        desired_["quat"][2] = 0;
-        desired_["quat"][3] = 1;
+        if(!trajectory_.is_trajectory_start && desired_linear_speed(0) > 0.01) {
+            // reset position
+            trajectory_.plan_state.p[0] = x0_map["p"][0];
+            trajectory_.plan_state.p[1] = x0_map["p"][1];
+            trajectory_.plan_state.p[2] = x0_map["p"][2];
 
-        desired_["rpy"][0] = 0;
-        desired_["rpy"][1] = 0;
-        desired_["rpy"][2] = 0;
+            // trajectory_.is_trajectory_start = true; // 这一行注释掉即取消轨迹跟踪
+        }
 
-        desired_["dp"][0] = cos(yaw)*desired_linear_speed[0] - sin(yaw)*desired_linear_speed[1];
-        desired_["dp"][1] = cos(yaw)*desired_linear_speed[1] + sin(yaw)*desired_linear_speed[0];
-        desired_["dp"][2] = desired_linear_speed[2];
+        if (trajectory_.is_trajectory_start) {
+            std::vector<double> base_lin_acc = std::vector<double>(3, 0.0);
+            std::vector<double> base_ang_acc = std::vector<double>(3, 0.0);
+            if (trajectory_.plan_state.dp[0] < 0.3) {
+                base_lin_acc[0] = 0.05;
+            }
 
-        desired_["omega"][0] = cos(yaw)*desired_angular_speed[0] - sin(yaw)*desired_angular_speed[1];
-        desired_["omega"][1] = cos(yaw)*desired_angular_speed[1] + sin(yaw)*desired_angular_speed[0];
-        desired_["omega"][2] = desired_angular_speed[2];
+            trajectory_.updatePlanState(base_lin_acc, base_ang_acc, loop_dt);
+
+            desired_["p"][0] = trajectory_.plan_state.p[0];
+            desired_["p"][1] = trajectory_.plan_state.p[1];
+            desired_["p"][2] = trajectory_.plan_state.p[2];
+
+            Eigen::Quaterniond quat = rpyToquat(Eigen::Vector3d(trajectory_.plan_state.rpy[0], trajectory_.plan_state.rpy[1], trajectory_.plan_state.rpy[2]));
+            desired_["quat"][0] = quat.x();
+            desired_["quat"][1] = quat.y();
+            desired_["quat"][2] = quat.z();
+            desired_["quat"][3] = quat.w();
+
+            desired_["rpy"][0] = trajectory_.plan_state.rpy[0];
+            desired_["rpy"][1] = trajectory_.plan_state.rpy[1];
+            desired_["rpy"][2] = trajectory_.plan_state.rpy[2];
+
+            desired_["dp"][0] = trajectory_.plan_state.dp[0];
+            desired_["dp"][1] = trajectory_.plan_state.dp[1];
+            desired_["dp"][2] = trajectory_.plan_state.dp[2];
+
+            desired_["omega"][0] = trajectory_.plan_state.omega[0];
+            desired_["omega"][1] = trajectory_.plan_state.omega[1];
+            desired_["omega"][2] = trajectory_.plan_state.omega[2];
+
+        } else {
+            desired_["quat"][0] = 0;
+            desired_["quat"][1] = 0;
+            desired_["quat"][2] = 0;
+            desired_["quat"][3] = 1;
+
+            desired_["rpy"][0] = 0;
+            desired_["rpy"][1] = 0;
+            desired_["rpy"][2] = 0;
+
+            desired_["dp"][0] = cos(yaw)*desired_linear_speed[0] - sin(yaw)*desired_linear_speed[1]; // 线速度先被转成local系再传进来
+            desired_["dp"][1] = cos(yaw)*desired_linear_speed[1] + sin(yaw)*desired_linear_speed[0];
+            desired_["dp"][2] = desired_linear_speed[2];
+
+            desired_["omega"][0] = cos(yaw)*desired_angular_speed[0] - sin(yaw)*desired_angular_speed[1]; // 但是角速度传进来的是world系的，这里应该有问题
+            desired_["omega"][1] = cos(yaw)*desired_angular_speed[1] + sin(yaw)*desired_angular_speed[0];
+            desired_["omega"][2] = desired_angular_speed[2];
+        }
 
         std::map<std::string,std::vector<std::vector<double>>> ref;
         std::map<std::string,std::vector<std::vector<double>>> param;
@@ -340,6 +384,7 @@ namespace controllers
                param,
                weight_vec_);
 
+#if 0
         //FILL the VIS message
         //ref values
 
@@ -441,6 +486,7 @@ namespace controllers
             arrow_quat.push_back({_quat.x(),_quat.y(),_quat.z(),_quat.w()});
            
         }
+#endif
         // set the timer state coherently with the wall clock
         timer_.set(t,init);
         // update desired torque, joint angle and joint velocity
@@ -514,8 +560,16 @@ namespace controllers
 
         //initialize the first value of the reference
         // to the initial condition x,y
-        p_k = x0_map.at("p");
+        if (trajectory_.is_trajectory_start) {
+            p_k = desired_.at("p");
+            // p_k = x0_map.at("p");
+            // p_k[0] = trajectory_.plan_state.p[0];
+        } else {
+            p_k = x0_map.at("p");
+        }
         
+        // std::cout << "px = " << trajectory_.plan_state.p[0] << ", dpx = " << trajectory_.plan_state.dp[0] << std::endl;
+
         //use proprioceptive height
         p_k[2] = proprioHeight(desired_.at("robot_height")[0]);
         
@@ -659,8 +713,10 @@ namespace controllers
                         foothold[1] += 0.5*(desired_.at("dp")[1]); //+ desired_.at("omega")[2]*(cos(yaw)*foot0_[3*leg]-sin(yaw)*foot0_[3*leg+1]))*timer_.duty_factor*timer_.step_freq;
 
                         //correction with actual speed 
-                        foothold[0] += std::sqrt(desired_.at("robot_height")[0]/9.81)*( x0_map.at("dp")[0]*cos(yaw) + x0_map.at("dp")[1]*sin(yaw) - desired_.at("dp")[0]);
-                        foothold[1] += std::sqrt(desired_.at("robot_height")[0]/9.81)*( x0_map.at("dp")[1]*cos(yaw) - x0_map.at("dp")[0]*sin(yaw) - desired_.at("dp")[1]);
+                        // foothold[0] += std::sqrt(desired_.at("robot_height")[0]/9.81)*( x0_map.at("dp")[0]*cos(yaw) + x0_map.at("dp")[1]*sin(yaw) - desired_.at("dp")[0]);
+                        // foothold[1] += std::sqrt(desired_.at("robot_height")[0]/9.81)*( x0_map.at("dp")[1]*cos(yaw) - x0_map.at("dp")[0]*sin(yaw) - desired_.at("dp")[1]);
+                        foothold[0] += std::sqrt(desired_.at("robot_height")[0]/9.81)*( x0_map.at("dp")[0] - desired_.at("dp")[0]); // 这里应该不需要坐标转换
+                        foothold[1] += std::sqrt(desired_.at("robot_height")[0]/9.81)*( x0_map.at("dp")[1] - desired_.at("dp")[1]);
                         
                         std::vector<Eigen::Vector3d> cp{};
                         bezier_curves_t::curve_constraints_t constraints;
@@ -713,8 +769,10 @@ namespace controllers
                             foothold[1] += 0.5*(desired_.at("dp")[1]); //+ desired_.at("omega")[2]*(cos(yaw)*foot0_[3*leg]-sin(yaw)*foot0_[3*leg+1]))*timer_.duty_factor*timer_.step_freq;
 
                             //correction with actual speed 
-                            foothold[0] += std::sqrt(desired_.at("robot_height")[0]/9.81)*( x0_map.at("dp")[0]*cos(yaw) + x0_map.at("dp")[1]*sin(yaw) - desired_.at("dp")[0]);
-                            foothold[1] += std::sqrt(desired_.at("robot_height")[0]/9.81)*( x0_map.at("dp")[1]*cos(yaw) - x0_map.at("dp")[0]*sin(yaw) - desired_.at("dp")[1]);
+                            // foothold[0] += std::sqrt(desired_.at("robot_height")[0]/9.81)*( x0_map.at("dp")[0]*cos(yaw) + x0_map.at("dp")[1]*sin(yaw) - desired_.at("dp")[0]);
+                            // foothold[1] += std::sqrt(desired_.at("robot_height")[0]/9.81)*( x0_map.at("dp")[1]*cos(yaw) - x0_map.at("dp")[0]*sin(yaw) - desired_.at("dp")[1]);
+                            foothold[0] += std::sqrt(desired_.at("robot_height")[0]/9.81)*( x0_map.at("dp")[0] - desired_.at("dp")[0]); // 同上，这里应该不需要坐标转换
+                            foothold[1] += std::sqrt(desired_.at("robot_height")[0]/9.81)*( x0_map.at("dp")[1] - desired_.at("dp")[1]);
                             std::vector<Eigen::Vector3d> cp{};
 
                             bezier_curves_t::curve_constraints_t constraints;
@@ -898,5 +956,30 @@ namespace controllers
     void Dwmpc::setStepHeight(double step_height)
     {
         desired_["step_height"][0] = step_height;
+    }
+
+    TrajectoryGenerator::TrajectoryGenerator() {
+        plan_state.p     = std::vector<double>(3, 0.0);
+        plan_state.rpy   = std::vector<double>(3, 0.0);
+        plan_state.dp    = std::vector<double>(3, 0.0);
+        plan_state.omega = std::vector<double>(3, 0.0);
+        is_trajectory_start = false;
+    }
+
+    void TrajectoryGenerator::updatePlanState(std::vector<double> const &base_lin_acc, 
+        std::vector<double> const &base_ang_acc, double const &dt) {
+
+        for (int i=0; i<3; ++i) {
+            plan_state.omega[i] += base_ang_acc[i]*dt;
+            plan_state.rpy[i] += plan_state.omega[i]*dt;
+        }
+
+        double const &yaw = plan_state.rpy[2];
+        plan_state.dp[0] += (cos(yaw)*base_lin_acc[0] - sin(yaw)*base_lin_acc[1])*dt;
+        plan_state.dp[1] += (cos(yaw)*base_lin_acc[1] + sin(yaw)*base_lin_acc[0])*dt;
+        plan_state.dp[2] += base_lin_acc[2]*dt;
+        for (int i=0; i<3; ++i) { 
+            plan_state.p[i] += plan_state.dp[i]*dt;
+        }
     }
 } //namespace controllers
