@@ -5,7 +5,7 @@ import time
 
 
 robot_name = "go2"   # "aliengo", "mini_cheetah", "go2", "hyqreal", ...
-scene_name = "flat"  # "flat", "stairs", "ramp", "perlin", "random_boxes", "random_pyramids"
+scene_name = "stairs"  # "flat", "stairs", "ramp", "perlin", "random_boxes", "random_pyramids"
 robot_feet_geom_names = dict(FR='FR',FL='FL', RR='RR' , RL='RL')
 robot_leg_joints = dict(FR=['FR_hip_joint', 'FR_thigh_joint', 'FR_calf_joint', ],
                         FL=['FL_hip_joint', 'FL_thigh_joint', 'FL_calf_joint', ],

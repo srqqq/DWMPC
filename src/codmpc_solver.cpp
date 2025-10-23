@@ -720,7 +720,7 @@ bool codmpcSolver::hpipmSolve(std::map<std::string,std::vector<double>> const &x
     solver_settings.reg_prim = 1e-12;
     solver_settings.warm_start = 0;
     solver_settings.pred_corr = 1;
-    solver_settings.ric_alg = 0;
+    solver_settings.ric_alg = 1;
     solver_settings.split_step = 1;
 
     std::vector<hpipm::OcpQpSolution> solution(N+1);

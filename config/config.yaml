@@ -32,7 +32,7 @@ quat: [0,0,0,1]
 dp: [0,0,0]
 omega: [0,0,0]
 
-# dt0.05 N15
+# 默认参数
 weight_p: [1e1,1e1,1e3]
 weight_quat: [3e3,3e3,0]
 weight_q:  [3e1]
@@ -46,7 +46,7 @@ weight_foot_stance: [1e4,1e4,1e5]
 weight_consensus: [2]
 gamma: [0.9]
 
-# 原始参数 dt0.08 N5
+# 原始参数
 # weight_p: [1e1,1e1,1e3]
 # weight_quat: [1e3,1e3,0]
 # weight_q:  [10]
