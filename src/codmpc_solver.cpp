@@ -676,6 +676,7 @@ bool codmpcSolver::hpipmSolve(std::map<std::string,std::vector<double>> const &x
                         fz_max, fz_max, fz_max, fz_max, fz_max,
                         fz_max, fz_max, fz_max, fz_max, fz_max;
 
+#if 1
     Eigen::MatrixXd C = Eigen::MatrixXd::Zero(constrains_, nx);
     Eigen::MatrixXd D = Eigen::MatrixXd::Zero(constrains_, nu);
     Eigen::VectorXd lg = Eigen::VectorXd::Zero(constrains_);
@@ -707,6 +708,19 @@ bool codmpcSolver::hpipmSolve(std::map<std::string,std::vector<double>> const &x
     qp[N].D = Eigen::MatrixXd::Zero(n_noslip_constrain, nu);  
     qp[N].lg = vec_foot_vel_min;
     qp[N].ug = vec_foot_vel_max;
+#else //只加摩擦锥约束
+
+    for (int i = 0; i < N; ++i) { // 注意：状态1～N，控制输入0~N-1
+        // 设置合并后的约束矩阵
+        qp[i].C = Eigen::MatrixXd::Zero(n_friction_cone_constrain, nx);
+        qp[i].D = friction_matrix;  // C_total x + D_total u 的输入部分矩阵
+
+        // 设置合并后的上下界
+        qp[i].lg = vec_friction_min;      // 总下界：lg <= C_total x + D_total u
+        qp[i].ug = vec_friction_max;      // 总上界：C_total x + D_total u <= ug
+    }
+
+#endif
 
     hpipm::OcpQpIpmSolverSettings solver_settings;
     solver_settings.mode = hpipm::HpipmMode::SpeedAbs;
