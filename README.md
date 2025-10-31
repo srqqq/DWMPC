@@ -1,26 +1,16 @@
-# DWMPC: Distributed Whole-Body Model Predictive Control
+# CODMPC
 
+## 说明
 
-| Simulation | Real Robot |
-| -------- | ------- |
-|  <img src="https://github.com/user-attachments/assets/c30d86dd-8e0e-4435-b616-f7bda4525031" width=500>  | <img src="https://github.com/user-attachments/assets/e0dce684-cff3-4c65-8560-a1e0806ad6a3" width=500> |
+该分支用于CODMPC的开发，与main分支的区别如下：
 
-<div align="center">
-  2024 IEEE/RSJ International Conference on Intelligent Robots and Systems
-</div>
-
-<div align="center">
-  <a href="#Installation"><b>Installation</b></a> |
-  <a href="https://arxiv.org/abs/2403.11742v3"><b>PrePrint</b></a> |
-  <a href=https://www.youtube.com/watch?v=Yar4W-Vlh2A><b>Video</b></a>|
-  <a href=https://sites.google.com/view/dwmpc/home><b>WebSite</b></a>
-  
-</div>
-
-DWMPC is a library for distributed model predictive control (MPC) of quadruped robots. This repository includes the core MPC controller in cpp and example usage with the `gym-quadruped` environment in Python. The provided [acados solver](c_generated_code) has been generated for aliengo. If you want to try with different robots check this [Python](script/generate_ocp.py) file to generate a new C solver.
-
+- 直接使用C++ Pinocchio计算运动学与动力学，不再使用acados生成代码
+- 求解器改为hpipm
 
 ## Dependencies
+
+系统推荐Ubuntu24.04。Ubuntu20.04经过测试无法安装仿真器环境。
+
 Before proceeding with the installation, ensure that the following dependencies are available on your system:
 
 - CMake
@@ -30,39 +20,32 @@ Before proceeding with the installation, ensure that the following dependencies 
 - YAML-CPP
 - Pybind11
 - ndcurves
-- acados
+- hpipm-cpp
 
 ## Installation 
 
 ### 1. Clone the Repository
+
 To get started, clone the repository and initialize all submodules:
+
 ```bash
-git clone https://github.com/iit-DLSLab/DWMPC.git
+git clone git@github.com:srqqq/DWMPC.git
 cd DWMPC
-git submodule update --init --recursive
+git checkout cod-mpc-develop
 ```
+
 ### 2. Install System Dependencies
+
 ```bash
 sudo apt-get install -y cmake g++ python3 python3-dev python3-pip libeigen3-dev libyaml-cpp-dev pybind11-dev
 ```
-Follow the instructions to install the `ndcurves` library from the [official repository](https://github.com/loco-3d/ndcurves)
+- Follow the instructions to install the `ndcurves` library from the [official repository](https://github.com/loco-3d/ndcurves)
+- install the `gym-quadruped` environment from the the [official repository](https://github.com/iit-DLSLab/gym-quadruped)
+- install hpipm-cpp  from the the [official repository](https://github.com/srqqq/hpipm-cpp) （注意：由于hpipm-cpp库长时间未更新，最新的hpipm和blasfeo接口已变更，需要将两个库回退到指定commit才能编译成功，具体见仓库README）
 
-### 3. Build Acados
-Navigate to the `acados` directory and build the library:
-```bash
-cd third_party/acados
-mkdir build && cd build
-cmake ..
-make install -j4
-```
-After building, add `acados` to your `LD_LIBRARY_PATH`:
-```bash
-export LD_LIBRARY_PATH=<path_to_acados\lib>:$LD_LIBRARY_PATH
-```
-### 4. Build DWMPC
+### 3. Build DWMPC
 From the main `DWMPC` repository, create a build directory and compile the project:
 ```bash
-cd ../../
 mkdir build && cd build
 cmake ..
 make -j8 && sudo make install
@@ -72,26 +55,10 @@ Add the `DWMPC` library to your environment:
 export LD_LIBRARY_PATH=/usr/lib/dls2/controllers/dwmpc:$LD_LIBRARY_PATH
 export PYTHONPATH=$PYTHONPATH:/usr/lib/dls2/controllers/dwmpc
 ```
-### 5. To run the example
-For running the example scripts, install the `gym-quadruped` environment from the the [official repository](https://github.com/iit-DLSLab/gym-quadruped)
+### 4. To run the example
 
-### To Build a new model
-To build a the controller for a different robot use `generate_ocp.py`. You just need to change the urdf path in:
-
-https://github.com/iit-DLSLab/DWMPC/blob/1701f91b5086806b8e043fb152ec693e9c79c55b/generate_ocp.py#L438C1-L438C76
-
-and provide the joint names in sequence and end-effector name in :
-`joints_name_list`,`contact_frame_name_list` (this is step is not neccesary if you are using one of the provided urdfs)
-
-Changes in the config.yaml are provided for Go1 and Go2. 
-
-## Citing this work
-
-```bibtex
-@INPROCEEDINGS{amatucciIROS2024,
-      title={Accelerating Model Predictive Control for Legged Robots through Distributed Optimization}, 
-      author={Lorenzo Amatucci and Giulio Turrisi and Angelo Bratta and Victor Barasuol and Claudio Semini},
-       booktitle={2024 IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS)},
-  year={2024}
-}
 ```
+cd examples
+python codmpc_sim.py
+```
+
