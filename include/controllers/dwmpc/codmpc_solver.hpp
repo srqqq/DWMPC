@@ -25,6 +25,10 @@
 #include "hpipm-cpp/hpipm-cpp.hpp"
 #endif
 
+#ifdef USE_FPGA
+#include "fish_protocol/fish_protocol.h"
+#endif
+
 class pdata
 {   
     public:
@@ -45,6 +49,7 @@ class pdata
 class codmpcSolver {
     public:
         codmpcSolver();
+        virtual ~codmpcSolver();
         void init(const parameter &config_param);
         void solve( bool &do_init,
                     const std::map<std::string,std::vector<double>> &x0_map,
@@ -54,11 +59,25 @@ class codmpcSolver {
         void getControl(std::vector<double> &des_q,std::vector<double> &des_dq,std::vector<double> &des_tau);
         void getData(std::map<std::string,pdata> &data);
         void prepare(); 
-        // void sendSolverData(std::vector<std::vector<double>> const &reference, std::vector<double> const &initial_condition, std::vector<double> const &u0_init);
-        // void receiveSolverResult();
         Eigen::DiagonalMatrix<double, Eigen::Dynamic> Q_;
         Eigen::DiagonalMatrix<double, Eigen::Dynamic> R_;
         double gamma_;
+
+#ifdef USE_FPGA
+        bool is_front_solved{false};
+        bool is_back_solved{false};
+        fish_protocol::ProtocolConfig proto_config_;
+        std::shared_ptr<fish_protocol::FishProtocol> protocol_;
+
+        std::string ByteArrayToString(const std::vector<uint8_t>& byteArray);
+        std::vector<uint8_t> StringToByteArray(const std::string& str);
+        void dataRecvCallback(const std::string& data);
+        template <typename T>
+        void appendEigenData(const T& data, std::vector<uint8_t>& buffer);
+        void protocolInit();
+        bool dataSend(std::map<std::string,std::vector<double>> const &x0_map,
+                      std::string const &subsystems_name);
+#endif
 
 #ifdef USE_HPIPM
         bool hpipmSolve(std::map<std::string,std::vector<double>> const &x0_map,

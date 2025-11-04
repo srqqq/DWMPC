@@ -3,6 +3,11 @@
 codmpcSolver::codmpcSolver()
 {}
 
+codmpcSolver::~codmpcSolver() {
+    // 销毁
+    protocol_->ProtocolDestory();
+}
+
 void codmpcSolver::init(const parameter &config_param)
 {
     std::cout << "codmpcSolver initialization begins..." << std::endl;
@@ -32,11 +37,15 @@ void codmpcSolver::init(const parameter &config_param)
     solver_time_ = std::vector<double>(2, 0.0);
     solver_time_wb_ = 0.0;
 
-    std::cout << "codmpcSolver initialized!!!" << std::endl;
+#ifdef USE_FPGA
+    protocolInit();
+#endif
 
 #ifdef DEBUG_MODE
     data_logger_.init("quadruped_data.csv");
 #endif
+
+    std::cout << "codmpcSolver initialized!!!" << std::endl;
 
     return;
 }
@@ -348,8 +357,11 @@ void codmpcSolver::solve( bool &do_init,
             }              
         }
         // pass to the codmpc sovler
-        // sendSolverData(problem_ref, x0, data_["wb"].tau[0]);  
-        // receiveSolverResult();
+
+#ifdef USE_FPGA
+        dataSend(x0_map, problem);
+#endif
+
 #ifdef USE_QPOASES 
         bool success = qpOASESsolve(x0, x0_map, x_ref_, u_ref, problem);
         if (!success) {
@@ -367,6 +379,15 @@ void codmpcSolver::solve( bool &do_init,
 
     }
 
+#ifdef USE_FPGA
+    if (!is_front_solved) {
+        std::cout << "子问题front未求解成功！！！" << std::endl;
+    }
+    if (!is_back_solved) {
+        std::cout << "子问题back未求解成功！！！" << std::endl;
+    }
+#endif
+
     for (auto problem : config_param_.subsystems_name)
     {   
         if (problem == "wb")
@@ -379,7 +400,7 @@ void codmpcSolver::solve( bool &do_init,
         std::vector<Eigen::VectorXd> x = quadruped_model_.updatePrediction(x0_[problem], u_[problem], problem);
 #endif
         
-        int n_joints {config_param_.subsystems_map_joint[problem].size()}; //6
+        int n_joints {static_cast<int>(config_param_.subsystems_map_joint[problem].size())}; //6
         int counter = 0;
         //update data state
         for (int k{0};k<config_param_.N_+1;k++)
@@ -472,7 +493,7 @@ void codmpcSolver::solve( bool &do_init,
         data_["wb"].omega[k][1] = 0;
         data_["wb"].omega[k][2] = 0;
 
-        double n{config_param_.subsystems_name.size()-1}; //n=2
+        double n{static_cast<double>(config_param_.subsystems_name.size() - 1)}; //n=2
 
         for(auto problem : config_param_.subsystems_name)
         {
@@ -558,18 +579,212 @@ double codmpcSolver::calculateL2Norm(std::vector<double> const &vec) {
     return std::sqrt(sumOfSquares);
 }
 
-// void codmpcSolver::sendSolverData(std::vector<std::vector<double>> const &reference, std::vector<double> const &initial_condition, std::vector<double> const &u0_init) {
+#ifdef USE_FPGA
+// 将字节数组转换为 std::string，发送数据时使用
+std::string codmpcSolver::ByteArrayToString(const std::vector<uint8_t>& byteArray) {
+    return std::string(reinterpret_cast<const char*>(byteArray.data()), byteArray.size());
+}
 
-//      // TODO
-//     return;
-// }
+// 将 std::string 转换为字节数组，接收数据时使用
+std::vector<uint8_t> codmpcSolver::StringToByteArray(const std::string& str) {
+    std::vector<uint8_t> byteArray(str.begin(), str.end());
+    return byteArray;
+}
 
+void codmpcSolver::dataRecvCallback(const std::string& data) {
 
-// void codmpcSolver::receiveSolverResult() {
+    std::vector<uint8_t> recv_buffer = StringToByteArray(data);
 
-//      // TODO
-//     return;
-// }
+    // 长度校验
+    int const total_byte_length = 2564;// (20*10+40*11)*4+4=2564
+    if (recv_buffer.size() != total_byte_length) {
+        std::cout << "接收数据长度错误！！！期望 "<< total_byte_length << " byte, 收到 " <<recv_buffer.size()<<" byte！！！"<< std::endl;
+    }
+
+    // 定义帧头帧尾
+    std::array<uint8_t, 2> const FRAME_HEADER = {0xAA, 0xBB};
+    std::array<uint8_t, 2> const FRAME_FOOTER = {0xCC, 0xDD};
+
+    // 帧头校验
+    if (*recv_buffer.begin() != FRAME_HEADER[0] || *(recv_buffer.begin()+1) != FRAME_HEADER[1]) {
+        std::cout << "接收数据帧头错误！！！" << std::endl;
+        return;
+    }
+
+    // 帧尾校验
+    if (*(recv_buffer.end()-2) != FRAME_FOOTER[0] || *(recv_buffer.end()-1) != FRAME_FOOTER[1]) {
+        std::cout << "接收数据帧尾错误！！！" << std::endl;
+        return;
+    }
+
+    // 检查字节数是否为4的倍数（每个float占4字节）
+    if ((recv_buffer.size()-4) % 4 != 0) {
+        std::cerr << "警告：接收的字节数不是4的倍数，可能存在数据不完整！" << std::endl;
+    }
+
+    // 计算可转换的float数量
+    size_t float_count = (recv_buffer.size()-4) / 4;
+    Eigen::VectorXf result(float_count);
+
+    // 遍历字节流，每4字节转换为一个float（跳过帧头帧尾）
+    for (size_t i = 2; i < float_count; ++i) {
+        // 获取当前组的起始地址（第i个float的第1个字节）
+        uint8_t* byte_ptr = &recv_buffer[i * 4];
+        // 将uint8_t*转换为float*，解引用得到float值
+        float* float_ptr = reinterpret_cast<float*>(byte_ptr);
+        result << *float_ptr;
+    }
+
+    // 接收数据
+    int const &N = config_param_.N_;
+    int const &nx = config_param_.n_state;
+    int const &nu = config_param_.n_control;
+    int const nx_send = 40;
+    int const nu_send = 20;
+    int const start_idx_x = nu_send*N;
+
+    std::string subsystems_name;
+    if(!is_front_solved) {
+        subsystems_name = "front";
+        is_front_solved = true;
+    } else if (!is_back_solved) {
+        subsystems_name = "back";
+        is_back_solved = true;
+    } else {
+        std::cout << "错误！！！接收数据时is_front_solved和is_back_solved全部是1！！！" << std::endl;
+        return;
+    }
+
+    for (int i = 0; i < N; ++i) {
+        u_[subsystems_name][i] = result.segment(i*nu_send, nu).cast<double>();
+        x_[subsystems_name][i] = result.segment(start_idx_x+i*nx_send, nx).cast<double>();
+    }
+    x_[subsystems_name][N] = result.segment(start_idx_x+N*nx_send, nx).cast<double>(); //状态多一维
+
+    return;
+}
+
+// 模板辅助函数：将Eigen矩阵/向量的float数据转换为字节并添加到buffer
+template <typename T>
+void codmpcSolver::appendEigenData(const T& data, std::vector<uint8_t>& buffer) {
+    // 确保数据非空
+    if (data.size() == 0) return;
+    
+    // 获取数据起始地址（float*）
+    const float* float_ptr = data.data();
+    // 计算总字节数（每个float占4字节）
+    size_t total_bytes = data.size() * 4;
+    // 转换为uint8_t指针以按字节访问
+    const uint8_t* byte_ptr = reinterpret_cast<const uint8_t*>(float_ptr);
+    
+    // 将所有字节添加到buffer末尾
+    buffer.insert(buffer.end(), byte_ptr, byte_ptr + total_bytes);
+}
+
+void codmpcSolver::protocolInit() {
+    proto_config_.protocol_type_ = fish_protocol::PROTOCOL_TYPE::SERIAL;
+    proto_config_.serial_baut_ = 115200;
+    proto_config_.serial_address_ = "/dev/ttyUSB0";
+
+    // 初始化
+    protocol_ = GetProtocolByConfig(proto_config_);
+
+    // 设置接收数据回调函数
+    // 方案1：用std::bind（需包含 <functional> 头文件）
+    // protocol_->SetDataRecvCallback(std::bind(&codmpcSolver::dataRecvCallback, this, std::placeholders::_1));
+
+    // 方案2：用lambda（更简洁）
+    protocol_->SetDataRecvCallback([this](const std::string& data) {
+        this->dataRecvCallback(data);
+    });
+
+    return;
+}
+
+bool codmpcSolver::dataSend(std::map<std::string,std::vector<double>> const &x0_map,
+                            std::string const &subsystems_name) {      
+    // setup QP
+    int s_idx = 0;
+    if (subsystems_name == "front") {
+        s_idx = 0;
+        is_front_solved = false;
+    } else if (subsystems_name == "back") {
+        s_idx = 2;
+        is_back_solved = false;
+    } else {
+        return false;
+    }
+
+    int const &N = config_param_.N_;
+    int const &nx = config_param_.n_state;
+    int const &nu = config_param_.n_control;
+    int const nx_send = 40;
+    int const nu_send = 20;
+    int const nc_send = 8;
+
+    // dynamics
+    Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> A = Eigen::MatrixXf::Zero(nx_send, nx_send);
+    A.block(0, 0, nx, nx) = quadruped_model_.Ak_[subsystems_name].cast<float>();
+    Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> B = Eigen::MatrixXf::Zero(nx_send, nu_send);
+    B.block(0, 0, nx, nu) = quadruped_model_.Bk_[subsystems_name].cast<float>();
+
+    // constraints
+    double const epsilon = 5e-3;
+    int n_noslip_constrain = 2*3;
+    std::vector<double> const contact_cmd = x0_map.at("contact_cmd");
+    Eigen::MatrixXd J_matrix = Eigen::MatrixXd::Zero(n_noslip_constrain, 12);
+    J_matrix.block(0, 0, 3, 12) = contact_cmd[s_idx]*quadruped_model_.J_linear_sub_[s_idx];
+    J_matrix.block(3, 0, 3, 12) = contact_cmd[s_idx+1]*quadruped_model_.J_linear_sub_[s_idx+1];
+    Eigen::MatrixXd J_select = Eigen::MatrixXd::Zero(n_noslip_constrain, nx);
+    J_select.block(0, 12, n_noslip_constrain, 12) = J_matrix;
+
+    Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> C = Eigen::MatrixXf::Zero(nc_send, nx_send);
+    C.block(0, 0, n_noslip_constrain, nx) = J_select.cast<float>();
+
+    // x0
+    Eigen::VectorXf x0 = x0_[subsystems_name].cast<float>();
+
+    // x_ref
+    Eigen::VectorXf x_ref = Eigen::VectorXf::Zero(nx_send*(N+1));
+    for (int i=0; i<=N; ++i) {
+        x_ref.segment(i*nx_send, nx) = x_ref_[subsystems_name][i].cast<float>();
+    }
+
+    // u_ref
+    Eigen::VectorXf u_ref = Eigen::VectorXf::Zero(nu_send*N);
+    for (int i=0; i<N; ++i) {
+        x_ref.segment(i*nu_send, nu) = u_ref_[subsystems_name][i].cast<float>();
+    }    
+
+    // B的伪逆
+    Eigen::MatrixXf B_pinv = B.completeOrthogonalDecomposition().pseudoInverse().cast<float>();
+
+    // 构建发送缓冲区
+    // 定义帧头帧尾
+    std::array<uint8_t, 2> const FRAME_HEADER = {0xAA, 0xBB};
+    std::array<uint8_t, 2> const FRAME_FOOTER = {0xCC, 0xDD};
+
+    std::vector<uint8_t> send_buffer;
+    // 插入帧头（在数据最前面）
+    send_buffer.insert(send_buffer.begin(), FRAME_HEADER.begin(), FRAME_HEADER.end());
+    // 插入数据
+    appendEigenData(A, send_buffer);
+    appendEigenData(B, send_buffer);
+    appendEigenData(C, send_buffer);
+    appendEigenData(x0, send_buffer);
+    appendEigenData(x_ref, send_buffer);
+    appendEigenData(u_ref, send_buffer);
+    appendEigenData(B_pinv, send_buffer);
+    // 插入帧尾（在数据最后面）
+    send_buffer.insert(send_buffer.end(), FRAME_FOOTER.begin(), FRAME_FOOTER.end());
+
+    // 发送数据
+    protocol_->ProtocolSendRawData(ByteArrayToString(send_buffer));
+
+    return true;
+}
+
+#endif
 
 #ifdef USE_HPIPM
 

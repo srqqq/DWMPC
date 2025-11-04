@@ -17,11 +17,17 @@ set(CMAKE_CXX_FLAGS "-O3")
 add_definitions(-DCURVES_WITH_PINOCCHIO_SUPPORT)
 add_definitions(-DDEBUG_MODE)
 
+# qpOASES已废弃，请勿使用
 # add_definitions(-DUSE_QPOASES)
 # find_package(qpOASES REQUIRED)
 
-add_definitions(-DUSE_HPIPM)
-find_package(hpipm-cpp REQUIRED)
+# HPIPM求解器，启用时记得把下面target_include_directories和target_link_libraries对应的部分也取消注释
+# add_definitions(-DUSE_HPIPM)
+# find_package(hpipm-cpp REQUIRED)
+
+# 外接板子求解
+add_definitions(-DUSE_FPGA)
+find_package(Threads REQUIRED)  # 查找pthread库
 
 find_package(Eigen3 3.3 REQUIRED NO_MODULE)
 find_package(pybind11 CONFIG REQUIRED)
@@ -45,7 +51,7 @@ target_include_directories(${MODULE_LIBRARY_NAME}
 		include
 		# ${CMAKE_CURRENT_SOURCE_DIR}/c_generated_code
 		/opt/openrobots/include
-		${hpipm-cpp_INCLUDE_DIR}
+		# ${hpipm-cpp_INCLUDE_DIR}
 	# add other include directories here
 )
 target_link_directories(${MODULE_LIBRARY_NAME}
@@ -63,7 +69,9 @@ target_link_libraries(${MODULE_LIBRARY_NAME}
 	Eigen3::Eigen
 	pinocchio::pinocchio
 	# qpOASES
-	hpipm-cpp::hpipm-cpp
+	# hpipm-cpp::hpipm-cpp
+	fish_protocol  # 链接libfish_protocol库
+  	Threads::Threads  # 链接pthread库（等效于-lpthread）
 	# add other linked libraries here
 )
 #Add test.cpp as an executable
