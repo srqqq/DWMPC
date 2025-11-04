@@ -4,8 +4,10 @@ codmpcSolver::codmpcSolver()
 {}
 
 codmpcSolver::~codmpcSolver() {
+#ifdef USE_FPGA
     // 销毁
     protocol_->ProtocolDestory();
+#endif  
 }
 
 void codmpcSolver::init(const parameter &config_param)
