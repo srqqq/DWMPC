@@ -19,25 +19,7 @@ typedef ndcurves::bezier_curve <timer_param_t, num_t, true, pointX_t> bezier_cur
 // add other includes here
 
 namespace controllers
-{
-    struct State_t {
-        std::vector<double> p;
-        std::vector<double> rpy;
-        std::vector<double> dp;
-        std::vector<double> omega;
-    };
-
-    class TrajectoryGenerator {
-        public:
-        TrajectoryGenerator();
-        virtual ~TrajectoryGenerator() = default;
-
-        bool is_trajectory_start;
-        State_t plan_state;
-        void updatePlanState(std::vector<double> const &base_lin_acc, 
-                             std::vector<double> const &base_ang_acc, double const &dt);
-    };
-
+{    
     class Dwmpc
     {
         public:
@@ -146,9 +128,6 @@ namespace controllers
         // TO DO change this to separate class that reads from a config file
         std::vector<double> q0_ {}; // home joint angle
         std::vector<double> foot0_ {}; // home foot position 
-
-        // 轨迹生成
-        TrajectoryGenerator trajectory_;
     };
 } //namespace controllers
 
