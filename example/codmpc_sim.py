@@ -6,12 +6,6 @@ import time
 
 robot_name = "go2"   # "aliengo", "mini_cheetah", "go2", "hyqreal", ...
 scene_name = "stairs"  # "flat", "stairs", "ramp", "perlin", "random_boxes", "random_pyramids"
-robot_feet_geom_names = dict(FR='FR',FL='FL', RR='RR' , RL='RL')
-robot_leg_joints = dict(FR=['FR_hip_joint', 'FR_thigh_joint', 'FR_calf_joint', ],
-                        FL=['FL_hip_joint', 'FL_thigh_joint', 'FL_calf_joint', ],
-                        RR=['RR_hip_joint', 'RR_thigh_joint', 'RR_calf_joint', ],
-                        RL=['RL_hip_joint', 'RL_thigh_joint', 'RL_calf_joint'])
-
 state_observables_names = tuple(QuadrupedEnv.ALL_OBS)  # return all available state observables
 
 sim_frequency = 200.0
@@ -47,70 +41,75 @@ mpc_inerval = 1.0/mpc_frequency
 start_time = time.time()
 is_run_mpc = False
 
-while True:
+try:
+    while True:
 
-    duration = time.time() - start_time
-    if duration >= mpc_inerval:
-        is_run_mpc = True
-        start_time = time.time()
-
-    qpos = env.mjData.qpos
-    qvel = env.mjData.qvel # 线速度world系下，角速度local系下
-
-    if is_run_mpc:
-        # print("duration = ", duration)
-        is_run_mpc = False
-
-        env_feet_pos = env.feet_pos('world')
-        env_feet_contact_state = env.feet_contact_state()[0]
-        foot_op = np.array([env_feet_pos.FL, env_feet_pos.FR, env_feet_pos.RL, env_feet_pos.RR], order="F")
-        contact_op = np.array([float(env_feet_contact_state.FL), float(env_feet_contact_state.FR), float(env_feet_contact_state.RL), float(env_feet_contact_state.RR)])
-
-        # foot_op = np.array([env.feet_pos('world').FL, env.feet_pos('world').FR, env.feet_pos('world').RL, env.feet_pos('world').RR],order="F")
-        # contact_op = np.array([float(env.feet_contact_state()[0].FL), float(env.feet_contact_state()[0].FR), float(env.feet_contact_state()[0].RL), float(env.feet_contact_state()[0].RR)])
-
-        quat = np.zeros(4)
-        quat[0] = qpos[4]
-        quat[1] = qpos[5]
-        quat[2] = qpos[6]
-        quat[3] = qpos[3]
-
+        qpos = env.mjData.qpos
+        qvel = env.mjData.qvel # 线速度world系下，角速度local系下
         ref_base_lin_vel, ref_base_ang_vel = env.target_base_vel() # ref_base_lin_vel和ref_base_ang_vel都是world系，详见函数注释
-        p = qpos[:3].copy()
-        q = qpos[7:].copy()
 
-        dp = qvel[:3].copy()
-        # omega = env.base_configuration[:3,:3]@qvel[3:6] # 把local系下的角速度转到world系下
-        omega = qvel[3:6]
-        dq = qvel[6:].copy()
+        duration = time.time() - start_time
+        if duration >= mpc_inerval:
+            is_run_mpc = True
+            start_time = time.time()
 
-        mpc.run(p,
-            quat,
-            q,
-            dp,
-            omega,
-            dq,
-            mpc_inerval,
-            contact_op,
-            foot_op,
-            env.heading_orientation_SO3.transpose()@ref_base_lin_vel, # local系的线速度
-            ref_base_ang_vel, # 为啥是world系的角速度？？？
-            np.array([0.0, 0.0, 0.0, 1.0]),
-            contact,
-            tau,
-            des_q,
-            des_dq)
+        if is_run_mpc:
+            # print("duration = ", duration)
+            is_run_mpc = False
 
-    action_torque = tau + Kp*(des_q.getList() - qpos[7:]) + Kd*(des_dq.getList() - qvel[6:])
-    action = np.zeros(env.mjModel.nu)
-    action[env.legs_tau_idx.FL] = action_torque[:3]
-    action[env.legs_tau_idx.FR] = action_torque[3:6]
-    action[env.legs_tau_idx.RL] = action_torque[6:9]
-    action[env.legs_tau_idx.RR] = action_torque[9:]
-    state, reward, is_terminated, is_truncated, info = env.step(action=action)
-    if is_terminated:
-        # print("!!!!! mujoco is is_terminated !!!!! timer = ", timer)
-        pass
-        # Do some stuff
-    env.render()
-env.close()
+            env_feet_pos = env.feet_pos('world')
+            env_feet_contact_state = env.feet_contact_state()[0]
+            foot_op = np.array([env_feet_pos.FL, env_feet_pos.FR, env_feet_pos.RL, env_feet_pos.RR], order="F")
+            contact_op = np.array([float(env_feet_contact_state.FL), float(env_feet_contact_state.FR), float(env_feet_contact_state.RL), float(env_feet_contact_state.RR)])
+            # foot_op = np.array([env.feet_pos('world').FL, env.feet_pos('world').FR, env.feet_pos('world').RL, env.feet_pos('world').RR],order="F")
+            # contact_op = np.array([float(env.feet_contact_state()[0].FL), float(env.feet_contact_state()[0].FR), float(env.feet_contact_state()[0].RL), float(env.feet_contact_state()[0].RR)])
+
+            quat = np.zeros(4)
+            quat[0] = qpos[4]
+            quat[1] = qpos[5]
+            quat[2] = qpos[6]
+            quat[3] = qpos[3]
+
+            p = qpos[:3].copy()
+            q = qpos[7:].copy()
+
+            dp = qvel[:3].copy()
+            # omega = env.base_configuration[:3,:3]@qvel[3:6] # 把local系下的角速度转到world系下
+            omega = qvel[3:6]
+            dq = qvel[6:].copy()
+
+            mpc.run(p,
+                quat,
+                q,
+                dp,
+                omega,
+                dq,
+                # mpc_inerval,
+                duration,
+                contact_op,
+                foot_op,
+                env.heading_orientation_SO3.transpose()@ref_base_lin_vel, # local系的线速度
+                ref_base_ang_vel, # 为啥是world系的角速度？？？
+                np.array([0.0, 0.0, 0.0, 1.0]),
+                contact,
+                tau,
+                des_q,
+                des_dq)
+
+        action_torque = tau + Kp*(des_q.getList() - qpos[7:]) + Kd*(des_dq.getList() - qvel[6:])
+        action = np.zeros(env.mjModel.nu)
+        action[env.legs_tau_idx.FL] = action_torque[:3]
+        action[env.legs_tau_idx.FR] = action_torque[3:6]
+        action[env.legs_tau_idx.RL] = action_torque[6:9]
+        action[env.legs_tau_idx.RR] = action_torque[9:]
+        state, reward, is_terminated, is_truncated, info = env.step(action=action)
+        if is_terminated:
+            # print("!!!!! mujoco is is_terminated !!!!! timer = ", timer)
+            pass
+            # Do some stuff
+        env.render()
+except KeyboardInterrupt:
+    print("用户中断程序")
+finally:
+    print("程序停止")
+    env.close()
