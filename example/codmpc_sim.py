@@ -2,10 +2,11 @@ from gym_quadruped.quadruped_env import QuadrupedEnv
 import pydwmpc
 import numpy as np
 import time
-
+from scipy.spatial.transform import Rotation as R
+from trajectory_planner import CircularTrajectoryPlanner
 
 robot_name = "go2"   # "aliengo", "mini_cheetah", "go2", "hyqreal", ...
-scene_name = "stairs"  # "flat", "stairs", "ramp", "perlin", "random_boxes", "random_pyramids"
+scene_name = "flat"  # "flat", "stairs", "ramp", "perlin", "random_boxes", "random_pyramids"
 state_observables_names = tuple(QuadrupedEnv.ALL_OBS)  # return all available state observables
 
 sim_frequency = 200.0
@@ -38,23 +39,48 @@ Kd = 3
 mpc_frequency = 100.0
 mpc_inerval = 1.0/mpc_frequency
 
-start_time = time.time()
+mpc_start_time = time.time()
 is_run_mpc = False
+
+is_traj_mode_enable = False # 想手动控制速度需要把它改为False
+is_traj_start = False
+traj_start_time = time.time()
 
 try:
     while True:
 
         qpos = env.mjData.qpos
         qvel = env.mjData.qvel # 线速度world系下，角速度local系下
-        ref_base_lin_vel, ref_base_ang_vel = env.target_base_vel() # ref_base_lin_vel和ref_base_ang_vel都是world系，详见函数注释
+        if not is_traj_start:
+            ref_base_lin_vel, ref_base_ang_vel = env.target_base_vel() # ref_base_lin_vel和ref_base_ang_vel都是world系，详见函数注释
 
-        duration = time.time() - start_time
-        if duration >= mpc_inerval:
+        # 轨迹生成部分
+        if is_traj_mode_enable and not is_traj_start and ref_base_lin_vel[0] >= 0.01:
+            is_traj_start = True
+            rotation = R.from_quat([qpos[4], qpos[5], qpos[6], qpos[3]]) # Define a quaternion (x, y, z, w)
+            euler_angles = rotation.as_euler('ZYX', degrees=True) # 注意：旋转顺序大小写字母表达的意思不同！！！大写表示转轴！！！
+            traj_planner = CircularTrajectoryPlanner(
+                x0=qpos[0],           # 初始X位置
+                y0=qpos[1],           # 初始Y位置
+                yaw0=euler_angles[0], # 初始航向角
+                radius=1.0,           # 轨迹半径
+                speed=0.2,            # 线速度
+                clockwise=False)      # 逆时针运动
+            traj_start_time = time.time()
+
+        if is_traj_start:
+            traj_duration = time.time() - traj_start_time
+            plan_state = traj_planner.get_plan_state(traj_duration)
+            ref_base_lin_vel = np.array([plan_state[2], plan_state[3], 0.0])
+            ref_base_ang_vel = np.array([0.0, 0.0, plan_state[5]])
+
+        mpc_duration = time.time() - mpc_start_time
+        if mpc_duration >= mpc_inerval:
             is_run_mpc = True
-            start_time = time.time()
+            mpc_start_time = time.time()
 
         if is_run_mpc:
-            # print("duration = ", duration)
+            # print("mpc_duration = ", mpc_duration)
             is_run_mpc = False
 
             env_feet_pos = env.feet_pos('world')
@@ -64,11 +90,11 @@ try:
             # foot_op = np.array([env.feet_pos('world').FL, env.feet_pos('world').FR, env.feet_pos('world').RL, env.feet_pos('world').RR],order="F")
             # contact_op = np.array([float(env.feet_contact_state()[0].FL), float(env.feet_contact_state()[0].FR), float(env.feet_contact_state()[0].RL), float(env.feet_contact_state()[0].RR)])
 
-            quat = np.zeros(4)
-            quat[0] = qpos[4]
-            quat[1] = qpos[5]
-            quat[2] = qpos[6]
-            quat[3] = qpos[3]
+            quat = np.zeros(4) 
+            quat[0] = qpos[4] # x
+            quat[1] = qpos[5] # y
+            quat[2] = qpos[6] # z
+            quat[3] = qpos[3] # w
 
             p = qpos[:3].copy()
             q = qpos[7:].copy()
@@ -85,7 +111,7 @@ try:
                 omega,
                 dq,
                 # mpc_inerval,
-                duration,
+                mpc_duration,
                 contact_op,
                 foot_op,
                 env.heading_orientation_SO3.transpose()@ref_base_lin_vel, # local系的线速度
