@@ -59,7 +59,7 @@ try:
         if is_traj_mode_enable and not is_traj_start and ref_base_lin_vel[0] >= 0.01:
             is_traj_start = True
             rotation = R.from_quat([qpos[4], qpos[5], qpos[6], qpos[3]]) # Define a quaternion (x, y, z, w)
-            euler_angles = rotation.as_euler('ZYX', degrees=True) # 注意：旋转顺序大小写字母表达的意思不同！！！大写表示转轴！！！
+            euler_angles = rotation.as_euler('ZYX', degrees=False) # 注意：旋转顺序大小写字母表达的意思不同！！！大写表示转轴！！！
             traj_planner = CircularTrajectoryPlanner(
                 x0=qpos[0],           # 初始X位置
                 y0=qpos[1],           # 初始Y位置
