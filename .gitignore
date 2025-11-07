@@ -1,4 +1,5 @@
 # 忽略整个文件夹（包括所有子文件和子文件夹）
 build/
 example/*.csv
+example/__pycache__
 .vscode/

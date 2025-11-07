@@ -149,8 +149,6 @@ namespace controllers
         
         desired_["step_height"] = config["step_height"].as<std::vector<double>>();
 
-        desired_["p"] = std::vector<double>(3,0);
-
         desired_["quat"] = config["quat"].as<std::vector<double>>();
 
         desired_["rpy"] = std::vector<double>(3,0);

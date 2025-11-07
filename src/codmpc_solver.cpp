@@ -20,15 +20,17 @@ void codmpcSolver::init(const parameter &config_param)
         pdata subsystem_data{};
         data_[problem] = subsystem_data; //全部初始化为空
 
-        std::vector<Eigen::VectorXd> u0(config_param_.N_, Eigen::VectorXd::Zero(config_param_.n_control));
-        u_[problem] = u0;
-        u_ref_[problem] = u0;
+        if (problem != "wb") {
+            std::vector<Eigen::VectorXd> u0(config_param_.N_, Eigen::VectorXd::Zero(config_param_.n_control));
+            u_[problem] = u0;
+            u_ref_[problem] = u0;
 
-        std::vector<Eigen::VectorXd> x0(config_param_.N_+1, Eigen::VectorXd::Zero(config_param_.n_state));
-        x_[problem] = x0;
-        x_ref_[problem] = x0;
+            std::vector<Eigen::VectorXd> x0(config_param_.N_+1, Eigen::VectorXd::Zero(config_param_.n_state));
+            x_[problem] = x0;
+            x_ref_[problem] = x0;
 
-        x0_[problem] = Eigen::VectorXd::Zero(config_param_.n_state);
+            x0_[problem] = Eigen::VectorXd::Zero(config_param_.n_state);
+        }
     }
     
     Q_ = Eigen::DiagonalMatrix<double, Eigen::Dynamic>(Eigen::VectorXd::Zero(config_param_.n_state));
