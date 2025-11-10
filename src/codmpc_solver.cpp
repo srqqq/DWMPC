@@ -28,12 +28,14 @@ void codmpcSolver::init(const parameter &config_param)
             std::vector<Eigen::VectorXd> x0(config_param_.N_+1, Eigen::VectorXd::Zero(config_param_.n_state));
             x_[problem] = x0;
             x_ref_[problem] = x0;
+            consensus_ref_[problem] = x0;
 
             x0_[problem] = Eigen::VectorXd::Zero(config_param_.n_state);
         }
     }
     
     Q_ = Eigen::DiagonalMatrix<double, Eigen::Dynamic>(Eigen::VectorXd::Zero(config_param_.n_state));
+    Q_consensus_ = Eigen::DiagonalMatrix<double, Eigen::Dynamic>(Eigen::VectorXd::Zero(config_param_.n_state));
     R_ = Eigen::DiagonalMatrix<double, Eigen::Dynamic>(Eigen::VectorXd::Zero(config_param_.n_control));
 
     quadruped_model_.modelInit(config_param);
@@ -157,14 +159,7 @@ void codmpcSolver::solve( bool &do_init,
             counter+=3;
         }
 
-        x0_[problem](30) = x0_map.at("dp")[0];
-        x0_[problem](31) = x0_map.at("dp")[1];
-        x0_[problem](32) = x0_map.at("dp")[2];
-        x0_[problem](33) = x0_map.at("omega")[2];
-        x0_[problem](34) = x0_map.at("omega")[1];
-        x0_[problem](35) = x0_map.at("omega")[0];
-
-        x0_[problem](36) = 1.0;
+        x0_[problem](30) = 1.0;
 
         //std::cout << std::endl;
 
@@ -201,6 +196,13 @@ void codmpcSolver::solve( bool &do_init,
             x_ref_[problem][k](16) = ref.at("omega")[k][1];
             x_ref_[problem][k](17) = ref.at("omega")[k][0];
 
+            consensus_ref_[problem][k](12) = data_["wb"].dp[k][0] - data_[problem].dual[k][0]; // ADMM的consensus
+            consensus_ref_[problem][k](13) = data_["wb"].dp[k][0] - data_[problem].dual[k][0];
+            consensus_ref_[problem][k](14) = data_["wb"].dp[k][0] - data_[problem].dual[k][0];
+            consensus_ref_[problem][k](15) = data_["wb"].omega[k][2] - data_[problem].dual[k][5];
+            consensus_ref_[problem][k](16) = data_["wb"].omega[k][1] - data_[problem].dual[k][4];
+            consensus_ref_[problem][k](17) = data_["wb"].omega[k][0] - data_[problem].dual[k][3];
+
             // set dq
             counter=0;
             for(auto idx : config_param_.subsystems_map_joint[problem]) //循环6次
@@ -217,16 +219,8 @@ void codmpcSolver::solve( bool &do_init,
                 x_ref_[problem][k](26+counter) = ref.at("foot")[k][3*idx+2];
                 counter+=3;
             }
-            // set consensus
-            x_ref_[problem][k](30) = data_["wb"].dp[k][0] - data_[problem].dual[k][0]; //！！！这里给consensus的ref。consensus的ref=barw-y，python里再减去w，即r-y
-            x_ref_[problem][k](31) = data_["wb"].dp[k][1] - data_[problem].dual[k][1];
-            x_ref_[problem][k](32) = data_["wb"].dp[k][2] - data_[problem].dual[k][2];
 
-            x_ref_[problem][k](33) = data_["wb"].omega[k][2] - data_[problem].dual[k][5];
-            x_ref_[problem][k](34) = data_["wb"].omega[k][1] - data_[problem].dual[k][4];
-            x_ref_[problem][k](35) = data_["wb"].omega[k][0] - data_[problem].dual[k][3];
-
-            x_ref_[problem][k](36) = 1.0;
+            x_ref_[problem][k](30) = 1.0;
 
             ////  ============ REFERENCE  U ============
             if (k < config_param_.N_) { // u N维
@@ -268,99 +262,97 @@ void codmpcSolver::solve( bool &do_init,
                     }
                 }
             }
-
-            ////  ============ WEIGHT  ============                
-            if(do_init) //本来是每个预测step都有一个权重，这里就不改了
-            {
-                // weight p 
-                Q_.diagonal()[0] = weight_vec.at("p")[0];
-                Q_.diagonal()[1] = weight_vec.at("p")[1];
-                Q_.diagonal()[2] = weight_vec.at("p")[2];
-
-                // weight quat
-                Q_.diagonal()[3] = weight_vec.at("quat")[2];
-                Q_.diagonal()[4] = weight_vec.at("quat")[1];
-                Q_.diagonal()[5] = weight_vec.at("quat")[0];
-
-                // weight q
-                counter = 0;
-                for(auto idx : config_param_.subsystems_map_joint[problem]) // 实际循环6次
-                {
-                    Q_.diagonal()[6+counter] = weight_vec.at("q")[0];
-                    counter++;
-                }
-            
-                // weight dp
-                Q_.diagonal()[12] = weight_vec.at("dp")[0];
-                Q_.diagonal()[13] = weight_vec.at("dp")[1];
-                Q_.diagonal()[14] = weight_vec.at("dp")[2];
-
-                // weight omega
-                Q_.diagonal()[15] = weight_vec.at("omega")[2];
-                Q_.diagonal()[16] = weight_vec.at("omega")[1];
-                Q_.diagonal()[17] = weight_vec.at("omega")[0];
-
-                // weight dq
-                counter = 0;
-                for(auto idx : config_param_.subsystems_map_joint[problem]) // 实际循环6次
-                {
-                    Q_.diagonal()[18+counter] = weight_vec.at("dq")[0];
-                    counter++;
-                }
-
-                // weight foot
-                counter = 0;
-                for(auto idx : config_param_.subsystems_map_contact[problem]) // 实际循环2*3次
-                {   
-                    if (param.at("contact_seq")[k][idx] == 1)
-                    {
-                        Q_.diagonal()[24 + counter] = weight_vec.at("foot_stance")[0];
-                        Q_.diagonal()[25 + counter] = weight_vec.at("foot_stance")[1];
-                        Q_.diagonal()[26 + counter] = weight_vec.at("foot_stance")[2];
-                    }
-                    else
-                    {
-                        Q_.diagonal()[24 + counter] = weight_vec.at("foot_swing")[0]; //分配摆动腿或站立腿权重
-                        Q_.diagonal()[25 + counter] = weight_vec.at("foot_swing")[1];
-                        Q_.diagonal()[26 + counter] = weight_vec.at("foot_swing")[2];
-                    }
-                    counter+=3;
-                }
-
-                // weight consensus 
-                Q_.diagonal()[30] = weight_vec.at("consensus")[0];
-                Q_.diagonal()[31] = weight_vec.at("consensus")[0];
-                Q_.diagonal()[32] = weight_vec.at("consensus")[0];
-                Q_.diagonal()[33] = weight_vec.at("consensus")[0];
-                Q_.diagonal()[34] = weight_vec.at("consensus")[0];
-                Q_.diagonal()[35] = weight_vec.at("consensus")[0];
-
-                // weight constant 1
-                Q_.diagonal()[36] = 0;
-
-                // weight tau
-                counter = 0;
-                for(auto idx : config_param_.subsystems_map_joint[problem]) // 实际循环6次
-                {
-                    R_.diagonal()[counter] = weight_vec.at("tau")[0];
-                    counter++;
-                }
-
-                // weight grf grf_aux
-                counter = 0;
-                for(auto idx : config_param_.subsystems_map_contact["wb"])
-                {
-                    R_.diagonal()[6+counter] = weight_vec.at("grf")[0];
-                    R_.diagonal()[7+counter] = weight_vec.at("grf")[0];                            
-                    R_.diagonal()[8+counter] = weight_vec.at("grf")[0];
-                    counter+=3;
-                }
-
-                // gamma
-                gamma_ = weight_vec.at("gamma")[0];
-            }              
         }
-        // pass to the codmpc sovler
+
+        ////  ============ WEIGHT  ============                
+        if(do_init) //本来是每个预测step都有一个权重，这里就不改了
+        {
+            // weight p 
+            Q_.diagonal()[0] = weight_vec.at("p")[0];
+            Q_.diagonal()[1] = weight_vec.at("p")[1];
+            Q_.diagonal()[2] = weight_vec.at("p")[2];
+
+            // weight quat
+            Q_.diagonal()[3] = weight_vec.at("quat")[2];
+            Q_.diagonal()[4] = weight_vec.at("quat")[1];
+            Q_.diagonal()[5] = weight_vec.at("quat")[0];
+
+            // weight q
+            counter = 0;
+            for(auto idx : config_param_.subsystems_map_joint[problem]) // 实际循环6次
+            {
+                Q_.diagonal()[6+counter] = weight_vec.at("q")[0];
+                counter++;
+            }
+        
+            // weight dp
+            Q_.diagonal()[12] = weight_vec.at("dp")[0];
+            Q_.diagonal()[13] = weight_vec.at("dp")[1];
+            Q_.diagonal()[14] = weight_vec.at("dp")[2];
+
+            // weight omega
+            Q_.diagonal()[15] = weight_vec.at("omega")[2];
+            Q_.diagonal()[16] = weight_vec.at("omega")[1];
+            Q_.diagonal()[17] = weight_vec.at("omega")[0];
+
+            Q_consensus_.diagonal()[12] = weight_vec.at("consensus")[0]; // ADMM的consensus
+            Q_consensus_.diagonal()[13] = weight_vec.at("consensus")[0];
+            Q_consensus_.diagonal()[14] = weight_vec.at("consensus")[0];
+            Q_consensus_.diagonal()[15] = weight_vec.at("consensus")[0];
+            Q_consensus_.diagonal()[16] = weight_vec.at("consensus")[0];
+            Q_consensus_.diagonal()[17] = weight_vec.at("consensus")[0];
+
+            // weight dq
+            counter = 0;
+            for(auto idx : config_param_.subsystems_map_joint[problem]) // 实际循环6次
+            {
+                Q_.diagonal()[18+counter] = weight_vec.at("dq")[0];
+                counter++;
+            }
+
+            // weight foot
+            counter = 0;
+            for(auto idx : config_param_.subsystems_map_contact[problem]) // 实际循环2*3次
+            {   
+                if (x0_map.at("contact_cmd")[idx] == 1)
+                {
+                    Q_.diagonal()[24 + counter] = weight_vec.at("foot_stance")[0];
+                    Q_.diagonal()[25 + counter] = weight_vec.at("foot_stance")[1];
+                    Q_.diagonal()[26 + counter] = weight_vec.at("foot_stance")[2];
+                }
+                else
+                {
+                    Q_.diagonal()[24 + counter] = weight_vec.at("foot_swing")[0]; //分配摆动腿或站立腿权重
+                    Q_.diagonal()[25 + counter] = weight_vec.at("foot_swing")[1];
+                    Q_.diagonal()[26 + counter] = weight_vec.at("foot_swing")[2];
+                }
+                counter+=3;
+            }
+
+            // weight constant 1
+            Q_.diagonal()[30] = 0;
+
+            // weight tau
+            counter = 0;
+            for(auto idx : config_param_.subsystems_map_joint[problem]) // 实际循环6次
+            {
+                R_.diagonal()[counter] = weight_vec.at("tau")[0];
+                counter++;
+            }
+
+            // weight grf grf_aux
+            counter = 0;
+            for(auto idx : config_param_.subsystems_map_contact["wb"])
+            {
+                R_.diagonal()[6+counter] = weight_vec.at("grf")[0];
+                R_.diagonal()[7+counter] = weight_vec.at("grf")[0];                            
+                R_.diagonal()[8+counter] = weight_vec.at("grf")[0];
+                counter+=3;
+            }
+
+            // gamma
+            gamma_ = weight_vec.at("gamma")[0];
+        }              
 
 #ifdef USE_FPGA
         dataSend(x0_map, problem);
@@ -810,6 +802,7 @@ bool codmpcSolver::hpipmSolve(std::map<std::string,std::vector<double>> const &x
     int const &n_contact_wb = config_param_.n_contact_wb;
     Eigen::VectorXd const &x0 = x0_[subsystems_name];
     std::vector<Eigen::VectorXd> const &x_ref = x_ref_[subsystems_name];
+    std::vector<Eigen::VectorXd> const &consensus_ref = consensus_ref_[subsystems_name];
     std::vector<Eigen::VectorXd> const &u_ref = u_ref_[subsystems_name];
 
     std::vector<hpipm::OcpQp> qp(N+1);
@@ -825,27 +818,31 @@ bool codmpcSolver::hpipmSolve(std::map<std::string,std::vector<double>> const &x
     }
 
     // cost
-    Eigen::MatrixXd Q(nx, nx), S(nu, nx), R(nu, nu);
-    Q.setZero(); Q.diagonal() = Q_.diagonal();
-    S.setZero();
-    R.setZero(); R.diagonal() << R_.diagonal();
+    Eigen::MatrixXd Q = Q_;
+    Eigen::MatrixXd Q_consensus = Q_consensus_;
+    Eigen::MatrixXd Q_total = Q_ + Q_consensus_;
+    Eigen::MatrixXd R = R_;
+    Eigen::MatrixXd S = Eigen::MatrixXd::Zero(nu, nx);
+
     // const Eigen::VectorXd q = - Q * x_ref;
     // const Eigen::VectorXd r = Eigen::VectorXd::Zero(nu);
     Eigen::VectorXd q = Eigen::VectorXd::Zero(nx);
     Eigen::VectorXd r = Eigen::VectorXd::Zero(nu);
     for (int i=0; i<N; ++i) { //0～N-1
-        q = - Q * x_ref[i];
+        q = - Q * x_ref[i] - Q_consensus * consensus_ref[i];
         r = - R * u_ref[i];
-        qp[i].Q = Q;
+        qp[i].Q = Q_total;
         qp[i].R = R;
         qp[i].S = S;
         qp[i].q = q;
         qp[i].r = r;
+        Q_total *= gamma_;
         Q *= gamma_;
+        Q_consensus *= gamma_;
         // R *= gamma_;
     }
-    q = - Q * x_ref[N];
-    qp[N].Q = Q;
+    q = - Q * x_ref[N] - Q_consensus * consensus_ref[N];
+    qp[N].Q = Q_total;
     qp[N].q = q;
 
     // constraints

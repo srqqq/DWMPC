@@ -8,15 +8,14 @@ def visualize_robot_data(csv_file_path):
     读取机器人数据CSV文件并绘制指定的图形
     
     参数:
-        csv_file_path1, csv_file_path2: CSV文件路径
+        csv_file_path: CSV文件路径
     """
     try:
 
         # title
         state_title = ['x', 'y', 'z', 'yaw', 'pitch', 'roll', 'q1', 'q2', 'q3', 'q4', 'q5', 'q6', 
                        'vx', 'vy', 'vz', 'yawrate', 'pitchrate', 'rollrate', 'dq1', 'dq2', 'dq3', 'dq4', 'dq5', 'dq6', 
-                       'pfx1', 'pfy1', 'pfz1', 'pfx2', 'pfy2', 'pfz2', 
-                       'vx', 'vy', 'vz', 'rollrate', 'pitchrate', 'yawrate',
+                       'pfx1', 'pfy1', 'pfz1', 'pfx2', 'pfy2', 'pfz2',
                        '1']
         control_title = ['tau1', 'tau2', 'tau3', 'tau4', 'tau5', 'tau6', 
                          'grf1_x1', 'grf1_y1', 'grf1_z1', 'grf1_x2', 'grf1_y2', 'grf1_z2',
@@ -34,12 +33,12 @@ def visualize_robot_data(csv_file_path):
         # 创建第一个窗口：当前状态与参考状态对比
         for problem in subsystems_name :
             print("Create state graph...")
-            fig, axs = plt.subplots(6, 6, figsize=(20, 24))  # 6行6列共36个子图
+            fig, axs = plt.subplots(5, 6, figsize=(20, 24))  # 5行6列共30个子图
             fig.suptitle(problem + ' state', fontsize=20, y=0.99)
             axs = axs.flatten()  # 将子图数组展平以便迭代
 
-            # 绘制前35组（每组1维状态）
-            for i in range(35):
+            # 绘制前30组（每组1维状态）
+            for i in range(29):
                 axs[i].plot(time, df[f'{problem}_x_{i}'], label=f'x_{i}', linewidth=1.5)
                 axs[i].plot(time, df[f'{problem}_x_ref_{i}'], label=f'x_ref_{i}', linestyle='--', linewidth=1.5)
                 # axs[i].set_title(f'state {i}', fontsize=10)
@@ -49,8 +48,8 @@ def visualize_robot_data(csv_file_path):
                 axs[i].yaxis.set_major_locator(MaxNLocator(4))  # 限制y轴刻度数量
                 axs[i].tick_params(axis='both', which='major', labelsize=7)
 
-            # 第36组（包含最后2维状态：35和36）
-            i = 35
+            # 第31组（包含最后2维状态：30和31）
+            i = 29
             axs[i].plot(time, df[f'{problem}_x_{i}'], label=f'x_{i}', linewidth=1.5)
             axs[i].plot(time, df[f'{problem}_x_ref_{i}'], label=f'x_ref_{i}', linestyle='--', linewidth=1.5)
             axs[i].plot(time, df[f'{problem}_x_{i+1}'], label=f'x_{i+1}', linewidth=1.5)

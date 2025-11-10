@@ -60,6 +60,7 @@ class codmpcSolver {
         void getData(std::map<std::string,pdata> &data);
         void prepare(); 
         Eigen::DiagonalMatrix<double, Eigen::Dynamic> Q_;
+        Eigen::DiagonalMatrix<double, Eigen::Dynamic> Q_consensus_; // ADMM的consensus
         Eigen::DiagonalMatrix<double, Eigen::Dynamic> R_;
         double gamma_;
 
@@ -115,6 +116,7 @@ class codmpcSolver {
         std::map<std::string, Eigen::VectorXd> x0_; //初始状态
         std::map<std::string, std::vector<Eigen::VectorXd>> x_ref_; // 参考状态序列
         std::map<std::string, std::vector<Eigen::VectorXd>> u_ref_; // 参考输入序列
+        std::map<std::string, std::vector<Eigen::VectorXd>> consensus_ref_; // 参考一致项序列
 
         int constrains_;
         std::vector<double> solver_time_;

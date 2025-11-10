@@ -5,8 +5,17 @@ import time
 from scipy.spatial.transform import Rotation as R
 from trajectory_planner import CircularTrajectoryPlanner
 
+'''
+功能设置
+'''
+scene_name = "flat"  # 仿真场景选择，可选参数："flat", "stairs", "ramp", "perlin", "random_boxes", "random_pyramids"
+is_traj_mode_enable = False # True：自动跟随轨迹（按一下上方向键开始）；False：手动控制速度
+
+'''
+功能设置末尾
+'''
+
 robot_name = "go2"   # "aliengo", "mini_cheetah", "go2", "hyqreal", ...
-scene_name = "flat"  # "flat", "stairs", "ramp", "perlin", "random_boxes", "random_pyramids"
 state_observables_names = tuple(QuadrupedEnv.ALL_OBS)  # return all available state observables
 
 sim_frequency = 200.0
@@ -42,8 +51,6 @@ mpc_inerval = 1.0/mpc_frequency
 mpc_start_time = time.time()
 is_run_mpc = False
 
-# is_traj_mode_enable = True # 想手动控制速度需要把它改为False
-is_traj_mode_enable = False # 想手动控制速度需要把它改为False
 is_traj_start = False
 traj_start_time = time.time()
 

@@ -13,7 +13,7 @@ void RobotDataLogger::init(std::string const &filename) {
 
     filename_ = filename;
     subsystems_name_ = {"front", "back"};
-    nx_ = 37;
+    nx_ = 31;
     nu_ = 18;
     is_first_write_ = true;
 

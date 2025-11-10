@@ -184,18 +184,14 @@ void quadrupedModel::updateSubsystem(std::string const &subsystems_name, Eigen::
     A.block(0, 12, 3, 3)   = Eigen::MatrixXd::Identity(3, 3);
     A.block(3, 15, 3, 3)   = inv_jac_R;
     A.block(6, 18, 6, 6)   = Eigen::MatrixXd::Identity(6, 6);
-    A.block(12, 36, 12, 1) = delta;
+    A.block(12, 30, 12, 1) = delta;
 
     // case 1.1: 使用LOCAL_WORLD_ALIGNED，子系统雅可比
     A.block(24, 12, 3, 12) = J_linear_sub_[s_idx];
     A.block(27, 12, 3, 12) = J_linear_sub_[s_idx+1];
 
-    A.block(30, 36, 6, 1)  = delta.segment(0, 6);
-
     Eigen::MatrixXd B_temp = inv_M*S; //12*18
     B.block(12, 0, 12, 18) = B_temp;
-    B.block(30, 0, 6,  18) = B_temp.block(0, 0, 6, 18);
-
 
     // 离散化
     double const &dt = config_param_.dt; //dt==loop_dt 或者 dt>loop_dt
@@ -250,7 +246,7 @@ void quadrupedModel::createSelectMatrix(std::string const &subsystems_name, std:
     int const &n_joint = config_param_.n_joint;
     int const &n_contact_wb = config_param_.n_contact_wb;
 
-    S = Eigen::MatrixXd::Zero(6 + n_joint, 6 + 3*n_contact_wb);
+    S = Eigen::MatrixXd::Zero(6 + n_joint, n_joint + 3*n_contact_wb);
     
     // 设置 S 中与 tau 对应的部分 (后6行，前6列)
     S.block(n_joint, 0, n_joint, n_joint) = Eigen::MatrixXd::Identity(n_joint, n_joint);
