@@ -117,7 +117,6 @@ class codmpcSolver {
         std::map<std::string, std::vector<Eigen::VectorXd>> u_ref_; // 参考输入序列
 
         int constrains_;
-        std::vector<double> solver_time_;
         double solver_time_wb_;
 
         double calculateL2Norm(std::vector<double> const &vec);

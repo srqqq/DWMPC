@@ -1,9 +1,9 @@
-n_problem : 2
+n_problem : 1
 n_joint_wb : 12
 n_contact_wb : 4
 n_legs : 4
-n_state : 37   # half robot
-n_control : 18  # half robot
+n_state : 49   # half robot
+n_control : 24  # half robot
 
 # GO2 and GO1 parameters
 q0 : [0, 0.9, -1.8, 0, 0.9, -1.8, 0, 0.9, -1.8, 0, 0.9, -1.8]
@@ -14,7 +14,7 @@ foot0 : [0.192, 0.142, 0.024,0.192, -0.142, 0.024, -0.195, 0.142, 0.024,-0.195, 
 
 max_iteration : 20
 receding_horizon : true
-subsystems_name : [front,back,wb]
+subsystems_name : [wb]
 subsystems_map_joint: 
   front: [0,1,2,3,4,5]
   back: [6,7,8,9,10,11]

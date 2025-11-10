@@ -21,7 +21,6 @@ void quadrupedModel::modelInit(parameter const &config_param) {
                             "RR_hip_joint", "RR_thigh_joint", "RR_calf_joint"};
 
     J_linear_wb_.resize(config_param_.n_contact_wb);
-    J_linear_sub_.resize(config_param_.n_contact_wb);
 
     // 设置文件路径
     std::string urdf_filename{"/usr/include/dls2/controllers/dwmpc/urdf/go2.urdf"};
@@ -56,9 +55,6 @@ void quadrupedModel::modelInit(parameter const &config_param) {
 
     //组建离散模型矩阵，只修改不变的部分
     for(auto subsystems_name : subsystems_name_list_) {
-        if (subsystems_name == "wb") {
-            continue;
-        } 
         Ak_[subsystems_name] = Eigen::MatrixXd::Zero(config_param_.n_state, config_param_.n_state);
         Bk_[subsystems_name] = Eigen::MatrixXd::Zero(config_param_.n_state, config_param_.n_control);
     }
@@ -123,19 +119,10 @@ void quadrupedModel::modelUpdate(std::map<std::string,std::vector<double>> const
         pinocchio::getFrameJacobian(pin_model_, pin_data_, frame_id, pinocchio::LOCAL_WORLD_ALIGNED, J);
         //wb
         J_linear_wb_[i] = J.topRows(3);
-        //sub       
-        int s_idx = (i < config_param_.n_contact? 0 : 2);
-        Eigen::MatrixXd J_temp = Eigen::MatrixXd::Zero(3, 12);
-        J_temp.block(0, 0, 3, 6) = J_linear_wb_[i].block(0, 0, 3, 6);
-        J_temp.block(0, 6, 3, 6) = J_linear_wb_[i].block(0, 6+3*s_idx, 3, 6);
-        J_linear_sub_[i] = J_temp;
     }
 
     // 更新子系统
     for(auto subsystems_name : subsystems_name_list_) {
-        if (subsystems_name == "wb") {
-            continue;
-        } 
         updateSubsystem(subsystems_name, M_wb, nle_wb, inv_jac_R, x0_map);
     }
  
@@ -145,57 +132,32 @@ void quadrupedModel::modelUpdate(std::map<std::string,std::vector<double>> const
 void quadrupedModel::updateSubsystem(std::string const &subsystems_name, Eigen::MatrixXd const &M_wb, 
                                      Eigen::VectorXd const &nle_wb, Eigen::MatrixXd const &inv_jac_R,
                                      std::map<std::string,std::vector<double>> const &x0_map) {
-    int s_idx = 0;
-    if (subsystems_name == "front") {
-        s_idx = 0;
-    } else if (subsystems_name == "back") {
-        s_idx = 2;
-    } else {
-        return;
-    }
 
     int &n_joint = config_param_.n_joint;
     int &n_contact = config_param_.n_contact;
 
-    //适配子系统的MCG
-    Eigen::MatrixXd M = Eigen::MatrixXd::Zero(6+n_joint, 6+n_joint);
-    Eigen::VectorXd nle = Eigen::VectorXd::Zero(6+config_param_.n_joint);
-
-    M.block(0, 0, 6, 6) = M_wb.block(0, 0, 6, 6);  // floating base
-    M.block(6, 6, n_joint, n_joint) = M_wb.block(6+3*s_idx, 6+3*s_idx, n_joint, n_joint);
-    M.block(0, 6, 6, n_joint) = M_wb.block(0, 6+3*s_idx, 6, n_joint);
-    M.block(6, 0, n_joint, 6) = M_wb.block(6+3*s_idx, 0, n_joint, 6);
-
-    nle.segment(0, 6) = nle_wb.segment(0, 6);
-    nle.segment(6, 6) = nle_wb.segment(6+3*s_idx, n_joint);
-
-    // 计算矩阵 S (12x18)
+    // 计算矩阵 S (18x24)
     Eigen::MatrixXd S;
     createSelectMatrix(subsystems_name, x0_map, S);
 
     //计算矩阵参数
-    Eigen::MatrixXd inv_M = M.inverse();
-    Eigen::VectorXd delta = inv_M*(-nle);
+    Eigen::MatrixXd inv_M = M_wb.inverse();
+    Eigen::VectorXd delta = inv_M*(-nle_wb);
 
     //连续模型
-    Eigen::MatrixXd A = Eigen::MatrixXd::Zero(config_param_.n_state, config_param_.n_state);
-    Eigen::MatrixXd B = Eigen::MatrixXd::Zero(config_param_.n_state, config_param_.n_control);
+    Eigen::MatrixXd A = Eigen::MatrixXd::Zero(config_param_.n_state, config_param_.n_state);   //49
+    Eigen::MatrixXd B = Eigen::MatrixXd::Zero(config_param_.n_state, config_param_.n_control); //24
 
-    A.block(0, 12, 3, 3)   = Eigen::MatrixXd::Identity(3, 3);
-    A.block(3, 15, 3, 3)   = inv_jac_R;
-    A.block(6, 18, 6, 6)   = Eigen::MatrixXd::Identity(6, 6);
-    A.block(12, 36, 12, 1) = delta;
+    A.block(0, 18, 3, 3)   = Eigen::MatrixXd::Identity(3, 3);  //49*49
+    A.block(3, 21, 3, 3)   = inv_jac_R;
+    A.block(6, 24, 12, 12) = Eigen::MatrixXd::Identity(12, 12);
+    A.block(18, 48, 18, 1) = delta;
+    A.block(36, 18, 3, 18) = J_linear_wb_[0]; 
+    A.block(39, 18, 3, 18) = J_linear_wb_[1];
+    A.block(42, 18, 3, 18) = J_linear_wb_[2];
+    A.block(45, 18, 3, 18) = J_linear_wb_[3];
 
-    // case 1.1: 使用LOCAL_WORLD_ALIGNED，子系统雅可比
-    A.block(24, 12, 3, 12) = J_linear_sub_[s_idx];
-    A.block(27, 12, 3, 12) = J_linear_sub_[s_idx+1];
-
-    A.block(30, 36, 6, 1)  = delta.segment(0, 6);
-
-    Eigen::MatrixXd B_temp = inv_M*S; //12*18
-    B.block(12, 0, 12, 18) = B_temp;
-    B.block(30, 0, 6,  18) = B_temp.block(0, 0, 6, 18);
-
+    B.block(18, 0, 18, 24) = inv_M*S; //49*24
 
     // 离散化
     double const &dt = config_param_.dt; //dt==loop_dt 或者 dt>loop_dt
@@ -216,9 +178,6 @@ std::vector<Eigen::VectorXd> quadrupedModel::updatePrediction(Eigen::VectorXd co
                                                             std::string const &subsystems_name) {
 
     std::vector<Eigen::VectorXd> xtraj(config_param_.N_+1, Eigen::VectorXd::Zero(config_param_.n_state));
-    if (subsystems_name == "wb") {
-        return xtraj;
-    }
     Eigen::VectorXd xk = x0;
     xtraj[0] = x0;
 
@@ -238,42 +197,19 @@ std::vector<Eigen::VectorXd> quadrupedModel::updatePrediction(Eigen::VectorXd co
 void quadrupedModel::createSelectMatrix(std::string const &subsystems_name, std::map<std::string, std::vector<double>> const &x0_map,
                                         Eigen::MatrixXd &S) {
     
-    int s_idx = 0;
-    if (subsystems_name == "front") {
-        s_idx = 0;
-    } else if (subsystems_name == "back") {
-        s_idx = 2;
-    } else {
-        return;
-    }
-    
+
     int const &n_joint = config_param_.n_joint;
     int const &n_contact_wb = config_param_.n_contact_wb;
 
-    S = Eigen::MatrixXd::Zero(6 + n_joint, 6 + 3*n_contact_wb);
+    S = Eigen::MatrixXd::Zero(6 + n_joint, n_joint + 3*n_contact_wb);
     
     // 设置 S 中与 tau 对应的部分 (后6行，前6列)
-    S.block(n_joint, 0, n_joint, n_joint) = Eigen::MatrixXd::Identity(n_joint, n_joint);
+    S.block(6, 0, n_joint, n_joint) = Eigen::MatrixXd::Identity(n_joint, n_joint);
     std::vector<double> contact_cmd = x0_map.at("contact_cmd");
-    if (s_idx == 0) {
-        for (int idx = 0; idx < 2; ++idx) { 
-            Eigen::MatrixXd J_T = J_linear_sub_[idx].transpose();
-            S.block(0, 6+3*idx, 12, 3) = contact_cmd[idx] * J_T;
-        }
-        for (int idx = 2; idx < 4; ++idx) { 
-            Eigen::MatrixXd J_T = J_linear_sub_[idx].transpose();
-            S.block(0, 6+3*idx, 6, 3) = (contact_cmd[idx] * J_T).topRows(6);
-        }
 
-    } else { //控制输入的顺序一直为u = [tau grf grf_aux]
-        for (int idx = 0; idx < 2; ++idx) { 
-            Eigen::MatrixXd J_T = J_linear_sub_[s_idx+idx].transpose();
-            S.block(0, 6+3*idx, 12, 3) = contact_cmd[s_idx+idx] * J_T;
-        }
-        for (int idx = 2; idx < 4; ++idx) {
-            Eigen::MatrixXd J_T = J_linear_sub_[idx-s_idx].transpose();
-            S.block(0, 6+3*idx, 6, 3) = (contact_cmd[idx-s_idx] * J_T).topRows(6);
-        }
+    for (int idx = 0; idx < 4; ++idx) { 
+        Eigen::MatrixXd J_T = J_linear_wb_[idx].transpose();
+        S.block(0, 12+3*idx, 18, 3) = contact_cmd[idx] * J_T;
     }
 
     return;

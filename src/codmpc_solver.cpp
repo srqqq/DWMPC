@@ -20,17 +20,16 @@ void codmpcSolver::init(const parameter &config_param)
         pdata subsystem_data{};
         data_[problem] = subsystem_data; //全部初始化为空
 
-        if (problem != "wb") {
-            std::vector<Eigen::VectorXd> u0(config_param_.N_, Eigen::VectorXd::Zero(config_param_.n_control));
-            u_[problem] = u0;
-            u_ref_[problem] = u0;
+        std::vector<Eigen::VectorXd> u0(config_param_.N_, Eigen::VectorXd::Zero(config_param_.n_control));
+        u_[problem] = u0;
+        u_ref_[problem] = u0;
 
-            std::vector<Eigen::VectorXd> x0(config_param_.N_+1, Eigen::VectorXd::Zero(config_param_.n_state));
-            x_[problem] = x0;
-            x_ref_[problem] = x0;
+        std::vector<Eigen::VectorXd> x0(config_param_.N_+1, Eigen::VectorXd::Zero(config_param_.n_state));
+        x_[problem] = x0;
+        x_ref_[problem] = x0;
 
-            x0_[problem] = Eigen::VectorXd::Zero(config_param_.n_state);
-        }
+        x0_[problem] = Eigen::VectorXd::Zero(config_param_.n_state);
+
     }
     
     Q_ = Eigen::DiagonalMatrix<double, Eigen::Dynamic>(Eigen::VectorXd::Zero(config_param_.n_state));
@@ -38,7 +37,6 @@ void codmpcSolver::init(const parameter &config_param)
 
     quadruped_model_.modelInit(config_param);
 
-    solver_time_ = std::vector<double>(2, 0.0);
     solver_time_wb_ = 0.0;
 
 #ifdef USE_FPGA
@@ -46,7 +44,7 @@ void codmpcSolver::init(const parameter &config_param)
 #endif
 
 #ifdef DEBUG_MODE
-    data_logger_.init("quadruped_data.csv");
+    // data_logger_.init("quadruped_data.csv");
 #endif
 
     std::cout << "codmpcSolver initialized!!!" << std::endl;
@@ -107,10 +105,7 @@ void codmpcSolver::solve( bool &do_init,
     quadruped_model_.modelUpdate(x0_map); // 放在循环外面
 
     for (auto problem : config_param_.subsystems_name)
-    {   
-        // if whole body problem skip
-        if (problem == "wb")
-            continue;
+    {
 
         int counter = 0;
 
@@ -127,44 +122,37 @@ void codmpcSolver::solve( bool &do_init,
         // problem_initial_condition.push_back(normalizeAngle(x0_map.at("rpy")[2] - ref.at("rpy")[0][2]));
 
         counter = 0;
-        for(auto idx : config_param_.subsystems_map_joint[problem]) //循环6次
+        for(auto idx : config_param_.subsystems_map_joint[problem]) //循环12次
         {
             x0_[problem](6+counter) = x0_map.at("q")[idx];
             ++counter;
         }
 
-        x0_[problem](12) = x0_map.at("dp")[0];
-        x0_[problem](13) = x0_map.at("dp")[1];
-        x0_[problem](14) = x0_map.at("dp")[2];
+        x0_[problem](18) = x0_map.at("dp")[0];
+        x0_[problem](19) = x0_map.at("dp")[1];
+        x0_[problem](20) = x0_map.at("dp")[2];
 
-        x0_[problem](15) = x0_map.at("omega")[2];
-        x0_[problem](16) = x0_map.at("omega")[1];
-        x0_[problem](17) = x0_map.at("omega")[0];
+        x0_[problem](21) = x0_map.at("omega")[2];
+        x0_[problem](22) = x0_map.at("omega")[1];
+        x0_[problem](23) = x0_map.at("omega")[0];
 
         counter=0;
-        for(auto idx : config_param_.subsystems_map_joint[problem]) //循环6次
+        for(auto idx : config_param_.subsystems_map_joint[problem]) //循环12次
         {
-            x0_[problem](18+counter) = x0_map.at("dq")[idx];
+            x0_[problem](24+counter) = x0_map.at("dq")[idx];
             ++counter;
         }
         
         counter=0;
-        for (auto idx : config_param_.subsystems_map_contact[problem]) //循环3*2次
+        for (auto idx : config_param_.subsystems_map_contact[problem]) //循环12次
         {
-            x0_[problem](24+counter) = x0_map.at("foot")[3*idx];
-            x0_[problem](25+counter) = x0_map.at("foot")[3*idx+1];
-            x0_[problem](26+counter) = x0_map.at("foot")[3*idx+2];
+            x0_[problem](36+counter) = x0_map.at("foot")[3*idx];
+            x0_[problem](37+counter) = x0_map.at("foot")[3*idx+1];
+            x0_[problem](38+counter) = x0_map.at("foot")[3*idx+2];
             counter+=3;
         }
 
-        x0_[problem](30) = data_["wb"].dp[0][0] - data_[problem].dual[0][0]; //！！！这里给consensus的ref。consensus的ref=barw-y，python里再减去w，即r-y
-        x0_[problem](31) = data_["wb"].dp[0][1] - data_[problem].dual[0][1];
-        x0_[problem](32) = data_["wb"].dp[0][2] - data_[problem].dual[0][2];
-        x0_[problem](33) = data_["wb"].omega[0][0] - data_[problem].dual[0][3];
-        x0_[problem](34) = data_["wb"].omega[0][1] - data_[problem].dual[0][4];
-        x0_[problem](35) = data_["wb"].omega[0][2] - data_[problem].dual[0][5];
-
-        x0_[problem](36) = 1.0;
+        x0_[problem](48) = 1.0;
 
         //std::cout << std::endl;
 
@@ -186,53 +174,45 @@ void codmpcSolver::solve( bool &do_init,
 
             // set q
             counter=0;
-            for(auto idx : config_param_.subsystems_map_joint[problem]) //循环6次
+            for(auto idx : config_param_.subsystems_map_joint[problem]) //循环12次
             {
                 x_ref_[problem][k](6+counter) = ref.at("q")[k][idx];
                 ++counter;
             }
 
             // set dp omega
-            x_ref_[problem][k](12) = ref.at("dp")[k][0];
-            x_ref_[problem][k](13) = ref.at("dp")[k][1];
-            x_ref_[problem][k](14) = ref.at("dp")[k][2];
+            x_ref_[problem][k](18) = ref.at("dp")[k][0];
+            x_ref_[problem][k](19) = ref.at("dp")[k][1];
+            x_ref_[problem][k](20) = ref.at("dp")[k][2];
 
-            x_ref_[problem][k](15) = ref.at("omega")[k][2];
-            x_ref_[problem][k](16) = ref.at("omega")[k][1];
-            x_ref_[problem][k](17) = ref.at("omega")[k][0];
+            x_ref_[problem][k](21) = ref.at("omega")[k][2];
+            x_ref_[problem][k](22) = ref.at("omega")[k][1];
+            x_ref_[problem][k](23) = ref.at("omega")[k][0];
 
             // set dq
             counter=0;
-            for(auto idx : config_param_.subsystems_map_joint[problem]) //循环6次
+            for(auto idx : config_param_.subsystems_map_joint[problem]) //循环12次
             {
-                x_ref_[problem][k](18+counter) = ref.at("dq")[k][idx];
+                x_ref_[problem][k](24+counter) = ref.at("dq")[k][idx];
                 ++counter;
             }
             // set foot
             counter=0;
-            for (auto idx : config_param_.subsystems_map_contact[problem]) //循环2*3次
+            for (auto idx : config_param_.subsystems_map_contact[problem]) //循环12次
             {
-                x_ref_[problem][k](24+counter) = ref.at("foot")[k][3*idx];
-                x_ref_[problem][k](25+counter) = ref.at("foot")[k][3*idx+1];
-                x_ref_[problem][k](26+counter) = ref.at("foot")[k][3*idx+2];
+                x_ref_[problem][k](36+counter) = ref.at("foot")[k][3*idx];
+                x_ref_[problem][k](37+counter) = ref.at("foot")[k][3*idx+1];
+                x_ref_[problem][k](38+counter) = ref.at("foot")[k][3*idx+2];
                 counter+=3;
             }
-            // set consensus
-            x_ref_[problem][k](30) = data_["wb"].dp[k][0] - data_[problem].dual[k][0]; //！！！这里给consensus的ref。consensus的ref=barw-y，python里再减去w，即r-y
-            x_ref_[problem][k](31) = data_["wb"].dp[k][1] - data_[problem].dual[k][1];
-            x_ref_[problem][k](32) = data_["wb"].dp[k][2] - data_[problem].dual[k][2];
 
-            x_ref_[problem][k](33) = data_["wb"].omega[k][0] - data_[problem].dual[k][3];
-            x_ref_[problem][k](34) = data_["wb"].omega[k][1] - data_[problem].dual[k][4];
-            x_ref_[problem][k](35) = data_["wb"].omega[k][2] - data_[problem].dual[k][5];
-
-            x_ref_[problem][k](36) = 1.0;
+            x_ref_[problem][k](48) = 1.0;
 
             ////  ============ REFERENCE  U ============
             if (k < config_param_.N_) { // u N维
                 // set tau
                 counter=0;
-                for(auto idx : config_param_.subsystems_map_joint[problem]) // 循环6次
+                for(auto idx : config_param_.subsystems_map_joint[problem]) // 循环12次
                 {
                     u_ref_[problem][k](counter) = ref.at("tau")[k][idx];
                     ++counter;
@@ -240,32 +220,12 @@ void codmpcSolver::solve( bool &do_init,
 
                 // set grf //这里和原代码不同，我们只优化grf而不是grf_wb，因此只给当前子系统赋值即可
                 counter=0;
-                for(auto idx : config_param_.subsystems_map_contact[problem]) // 循环3*2=6次
+                for(auto idx : config_param_.subsystems_map_contact[problem]) // 循环12次
                 {
-                    u_ref_[problem][k](6+counter) = ref.at("grf")[k][3*idx];
-                    u_ref_[problem][k](7+counter) = ref.at("grf")[k][3*idx+1];
-                    u_ref_[problem][k](8+counter) = ref.at("grf")[k][3*idx+2];
+                    u_ref_[problem][k](12+counter) = ref.at("grf")[k][3*idx];
+                    u_ref_[problem][k](13+counter) = ref.at("grf")[k][3*idx+1];
+                    u_ref_[problem][k](14+counter) = ref.at("grf")[k][3*idx+2];
                     counter+=3;              
-                }
-
-                // set grf aux
-                counter=0;
-                if (problem == "front") {
-                    for(auto idx : config_param_.subsystems_map_contact["back"]) // 循环3*2=6次
-                    {
-                        u_ref_[problem][k](12+counter) = ref.at("grf")[k][3*idx];
-                        u_ref_[problem][k](13+counter) = ref.at("grf")[k][3*idx+1];
-                        u_ref_[problem][k](14+counter) = ref.at("grf")[k][3*idx+2];
-                        counter+=3;              
-                    }
-                } else {
-                    for(auto idx : config_param_.subsystems_map_contact["front"]) // 循环3*2=6次
-                    {
-                        u_ref_[problem][k](12+counter) = ref.at("grf")[k][3*idx];
-                        u_ref_[problem][k](13+counter) = ref.at("grf")[k][3*idx+1];
-                        u_ref_[problem][k](14+counter) = ref.at("grf")[k][3*idx+2];
-                        counter+=3;              
-                    }
                 }
             }
 
@@ -284,63 +244,55 @@ void codmpcSolver::solve( bool &do_init,
 
                 // weight q
                 counter = 0;
-                for(auto idx : config_param_.subsystems_map_joint[problem]) // 实际循环6次
+                for(auto idx : config_param_.subsystems_map_joint[problem]) // 实际循环12次
                 {
                     Q_.diagonal()[6+counter] = weight_vec.at("q")[0];
                     counter++;
                 }
             
                 // weight dp
-                Q_.diagonal()[12] = weight_vec.at("dp")[0];
-                Q_.diagonal()[13] = weight_vec.at("dp")[1];
-                Q_.diagonal()[14] = weight_vec.at("dp")[2];
+                Q_.diagonal()[18] = weight_vec.at("dp")[0];
+                Q_.diagonal()[19] = weight_vec.at("dp")[1];
+                Q_.diagonal()[20] = weight_vec.at("dp")[2];
 
                 // weight omega
-                Q_.diagonal()[15] = weight_vec.at("omega")[2];
-                Q_.diagonal()[16] = weight_vec.at("omega")[1];
-                Q_.diagonal()[17] = weight_vec.at("omega")[0];
+                Q_.diagonal()[21] = weight_vec.at("omega")[2];
+                Q_.diagonal()[22] = weight_vec.at("omega")[1];
+                Q_.diagonal()[23] = weight_vec.at("omega")[0];
 
                 // weight dq
                 counter = 0;
-                for(auto idx : config_param_.subsystems_map_joint[problem]) // 实际循环6次
+                for(auto idx : config_param_.subsystems_map_joint[problem]) // 实际循环12次
                 {
-                    Q_.diagonal()[18+counter] = weight_vec.at("dq")[0];
+                    Q_.diagonal()[24+counter] = weight_vec.at("dq")[0];
                     counter++;
                 }
 
                 // weight foot
                 counter = 0;
-                for(auto idx : config_param_.subsystems_map_contact[problem]) // 实际循环2*3次
+                for(auto idx : config_param_.subsystems_map_contact[problem]) // 实际循环4*3次
                 {   
                     if (param.at("contact_seq")[k][idx] == 1)
                     {
-                        Q_.diagonal()[24 + counter] = weight_vec.at("foot_stance")[0];
-                        Q_.diagonal()[25 + counter] = weight_vec.at("foot_stance")[1];
-                        Q_.diagonal()[26 + counter] = weight_vec.at("foot_stance")[2];
+                        Q_.diagonal()[36 + counter] = weight_vec.at("foot_stance")[0];
+                        Q_.diagonal()[37 + counter] = weight_vec.at("foot_stance")[1];
+                        Q_.diagonal()[38 + counter] = weight_vec.at("foot_stance")[2];
                     }
                     else
                     {
-                        Q_.diagonal()[24 + counter] = weight_vec.at("foot_swing")[0]; //分配摆动腿或站立腿权重
-                        Q_.diagonal()[25 + counter] = weight_vec.at("foot_swing")[1];
-                        Q_.diagonal()[26 + counter] = weight_vec.at("foot_swing")[2];
+                        Q_.diagonal()[36 + counter] = weight_vec.at("foot_swing")[0]; //分配摆动腿或站立腿权重
+                        Q_.diagonal()[37 + counter] = weight_vec.at("foot_swing")[1];
+                        Q_.diagonal()[38 + counter] = weight_vec.at("foot_swing")[2];
                     }
                     counter+=3;
                 }
 
-                // weight consensus 
-                Q_.diagonal()[30] = weight_vec.at("consensus")[0];
-                Q_.diagonal()[31] = weight_vec.at("consensus")[0];
-                Q_.diagonal()[32] = weight_vec.at("consensus")[0];
-                Q_.diagonal()[33] = weight_vec.at("consensus")[0];
-                Q_.diagonal()[34] = weight_vec.at("consensus")[0];
-                Q_.diagonal()[35] = weight_vec.at("consensus")[0];
-
                 // weight constant 1
-                Q_.diagonal()[36] = 0;
+                Q_.diagonal()[48] = 0;
 
                 // weight tau
                 counter = 0;
-                for(auto idx : config_param_.subsystems_map_joint[problem]) // 实际循环6次
+                for(auto idx : config_param_.subsystems_map_joint[problem]) // 实际循环12次
                 {
                     R_.diagonal()[counter] = weight_vec.at("tau")[0];
                     counter++;
@@ -350,9 +302,9 @@ void codmpcSolver::solve( bool &do_init,
                 counter = 0;
                 for(auto idx : config_param_.subsystems_map_contact["wb"])
                 {
-                    R_.diagonal()[6+counter] = weight_vec.at("grf")[0];
-                    R_.diagonal()[7+counter] = weight_vec.at("grf")[0];                            
-                    R_.diagonal()[8+counter] = weight_vec.at("grf")[0];
+                    R_.diagonal()[12+counter] = weight_vec.at("grf")[0];
+                    R_.diagonal()[13+counter] = weight_vec.at("grf")[0];                            
+                    R_.diagonal()[14+counter] = weight_vec.at("grf")[0];
                     counter+=3;
                 }
 
@@ -394,8 +346,6 @@ void codmpcSolver::solve( bool &do_init,
 
     for (auto problem : config_param_.subsystems_name)
     {   
-        if (problem == "wb")
-            continue;
         // update state from solution
 
 #ifdef USE_HPIPM
@@ -428,27 +378,27 @@ void codmpcSolver::solve( bool &do_init,
 
             //q
             counter = 0;
-            for(auto idx : config_param_.subsystems_map_joint[problem]) //6个循环
+            for(auto idx : config_param_.subsystems_map_joint[problem]) //12个循环
             {
                 data_["wb"].q[k][idx] = x[k](6+counter);  // data_["wb"]放的是当前及预测状态，但是没放全   
                 counter++;
             }
             
             //dp
-            data_[problem].dp[k][0] = x[k](12);
-            data_[problem].dp[k][1] = x[k](13);
-            data_[problem].dp[k][2] = x[k](14);
+            data_[problem].dp[k][0] = x[k](18);
+            data_[problem].dp[k][1] = x[k](19);
+            data_[problem].dp[k][2] = x[k](20);
 
             //omega
-            data_[problem].omega[k][0] = x[k](17);
-            data_[problem].omega[k][1] = x[k](16);
-            data_[problem].omega[k][2] = x[k](15);
+            data_[problem].omega[k][0] = x[k](21);
+            data_[problem].omega[k][1] = x[k](22);
+            data_[problem].omega[k][2] = x[k](23);
 
             //dq
             counter = 0;
             for(auto idx : config_param_.subsystems_map_joint[problem])  //6个循环
             {
-                data_["wb"].dq[k][idx] = x[k](18+counter);
+                data_["wb"].dq[k][idx] = x[k](24+counter);
                 counter++;
             }
 
@@ -456,9 +406,9 @@ void codmpcSolver::solve( bool &do_init,
             counter = 0;
             for (auto idx : config_param_.subsystems_map_contact[problem]) //循环2*3次
             {
-                data_["wb"].foot[k][3*idx]   = x[k](24+counter);
-                data_["wb"].foot[k][3*idx+1] = x[k](25+counter);
-                data_["wb"].foot[k][3*idx+2] = x[k](26+counter);
+                data_["wb"].foot[k][3*idx]   = x[k](36+counter);
+                data_["wb"].foot[k][3*idx+1] = x[k](37+counter);
+                data_["wb"].foot[k][3*idx+2] = x[k](38+counter);
                 counter += 3;
             }
 
@@ -486,73 +436,14 @@ void codmpcSolver::solve( bool &do_init,
             }
         }
     }
-    // update whole body speeds
-    for(int k{0};k<config_param_.N_+1;k++)
-    {
-        data_["wb"].dp[k][0] = 0;
-        data_["wb"].dp[k][1] = 0;
-        data_["wb"].dp[k][2] = 0;
-
-        data_["wb"].omega[k][0] = 0;
-        data_["wb"].omega[k][1] = 0;
-        data_["wb"].omega[k][2] = 0;
-
-        double n{static_cast<double>(config_param_.subsystems_name.size() - 1)}; //n=2
-
-        for(auto problem : config_param_.subsystems_name)
-        {
-            if (problem == "wb")
-                continue;
-            data_["wb"].dp[k][0] += (data_[problem].dp[k][0] + data_[problem].dual[k][0]/weight_vec.at("consensus")[0])/n;
-            data_["wb"].dp[k][1] += (data_[problem].dp[k][1] + data_[problem].dual[k][1]/weight_vec.at("consensus")[0])/n;
-            data_["wb"].dp[k][2] += (data_[problem].dp[k][2] + data_[problem].dual[k][2]/weight_vec.at("consensus")[0])/n;
-
-            data_["wb"].omega[k][0] += (data_[problem].omega[k][0] + data_[problem].dual[k][3]/weight_vec.at("consensus")[0])/n;
-            data_["wb"].omega[k][1] += (data_[problem].omega[k][1] + data_[problem].dual[k][4]/weight_vec.at("consensus")[0])/n;
-            data_["wb"].omega[k][2] += (data_[problem].omega[k][2] + data_[problem].dual[k][5]/weight_vec.at("consensus")[0])/n;
-        }
-    }
-    // update dual
-    for(auto problem : config_param_.subsystems_name)
-    {
-        if (problem == "wb")
-        {
-            continue;
-        }
-        for (int k{0};k<config_param_.N_;k++)
-        {
-            data_[problem].dual[k][0] += (data_[problem].dp[k][0] - data_["wb"].dp[k][0])*weight_vec.at("consensus")[0];
-            data_[problem].dual[k][1] += (data_[problem].dp[k][1] - data_["wb"].dp[k][1])*weight_vec.at("consensus")[0];
-            data_[problem].dual[k][2] += (data_[problem].dp[k][2] - data_["wb"].dp[k][2])*weight_vec.at("consensus")[0];
-            data_[problem].dual[k][3] += (data_[problem].omega[k][0] - data_["wb"].omega[k][0])*weight_vec.at("consensus")[0];
-            data_[problem].dual[k][4] += (data_[problem].omega[k][1] - data_["wb"].omega[k][1])*weight_vec.at("consensus")[0];
-            data_[problem].dual[k][5] += (data_[problem].omega[k][2] - data_["wb"].omega[k][2])*weight_vec.at("consensus")[0];
-
-            data_[problem].residual[k][0] = (data_[problem].dp[k][0] - data_["wb"].dp[k][0]);
-            data_[problem].residual[k][1] = (data_[problem].dp[k][1] - data_["wb"].dp[k][1]);
-            data_[problem].residual[k][2] = (data_[problem].dp[k][2] - data_["wb"].dp[k][2]);
-            data_[problem].residual[k][3] = (data_[problem].omega[k][0] - data_["wb"].omega[k][0]);
-            data_[problem].residual[k][4] = (data_[problem].omega[k][1] - data_["wb"].omega[k][1]);
-            data_[problem].residual[k][5] = (data_[problem].omega[k][2] - data_["wb"].omega[k][2]);
-        }
-        // for (int k{0};k<config_param_.N_;k++)
-        // {
-        //     data_[problem].dual[k][0] = (data_["front"].dp[k][0] - (data_["back"].dp[k][0]))*weight_vec.at("consensus")[0];
-        //     data_[problem].dual[k][1] = (data_["front"].dp[k][1] - (data_["back"].dp[k][1]))*weight_vec.at("consensus")[0];
-        //     data_[problem].dual[k][2] = (data_["front"].dp[k][2] - (data_["back"].dp[k][2]))*weight_vec.at("consensus")[0];
-        //     data_[problem].dual[k][3] = (data_["front"].omega[k][0] - (data_["back"].omega[k][0]))*weight_vec.at("consensus")[0];
-        //     data_[problem].dual[k][4] = (data_["front"].omega[k][1] - (data_["back"].omega[k][1]))*weight_vec.at("consensus")[0];
-        //     data_[problem].dual[k][5] = (data_["front"].omega[k][2] - (data_["back"].omega[k][2]))*weight_vec.at("consensus")[0];
-        // }
-    }
     // check stopping criteria
     //TODO
 #ifdef DEBUG_MODE
-    std::vector<double> residual_l2_norm_time;
-    residual_l2_norm_time.push_back(calculateL2Norm(data_["front"].residual[0]));
-    residual_l2_norm_time.push_back(calculateL2Norm(data_["back"].residual[0]));
+    // std::vector<double> residual_l2_norm_time;
+    // residual_l2_norm_time.push_back(calculateL2Norm(data_["front"].residual[0]));
+    // residual_l2_norm_time.push_back(calculateL2Norm(data_["back"].residual[0]));
 
-    data_logger_.logData(x0_, x_ref_, u_, u_ref_, residual_l2_norm_time, solver_time_wb_);
+    // data_logger_.logData(x0_, x_ref_, u_, u_ref_, residual_l2_norm_time, solver_time_wb_);
 #endif
 
     do_init = false;
@@ -795,15 +686,6 @@ bool codmpcSolver::dataSend(std::map<std::string,std::vector<double>> const &x0_
 bool codmpcSolver::hpipmSolve(std::map<std::string,std::vector<double>> const &x0_map,
                               std::string const &subsystems_name) {
     // setup QP
-    int s_idx = 0;
-    if (subsystems_name == "front") {
-        s_idx = 0;
-    } else if (subsystems_name == "back") {
-        s_idx = 2;
-    } else {
-        return false;
-    }
-
     int const &N = config_param_.N_;
     int const &nx = config_param_.n_state;
     int const &nu = config_param_.n_control;
@@ -853,15 +735,18 @@ bool codmpcSolver::hpipmSolve(std::map<std::string,std::vector<double>> const &x
 
     /////////////////// constrain 1: foot noslip
     double const epsilon = 5e-3;
-    int n_noslip_constrain = 2*3;
+    int n_noslip_constrain = 4*3;
     constrains_ += n_noslip_constrain;
 
     std::vector<double> const contact_cmd = x0_map.at("contact_cmd");
-    Eigen::MatrixXd J_matrix = Eigen::MatrixXd::Zero(n_noslip_constrain, 12);
-    J_matrix.block(0, 0, 3, 12) = contact_cmd[s_idx]*quadruped_model_.J_linear_sub_[s_idx];
-    J_matrix.block(3, 0, 3, 12) = contact_cmd[s_idx+1]*quadruped_model_.J_linear_sub_[s_idx+1];
+    Eigen::MatrixXd J_matrix = Eigen::MatrixXd::Zero(n_noslip_constrain, 18);
+    J_matrix.block(0, 0, 3, 18) = contact_cmd[0]*quadruped_model_.J_linear_wb_[0];
+    J_matrix.block(3, 0, 3, 18) = contact_cmd[1]*quadruped_model_.J_linear_wb_[1];
+    J_matrix.block(6, 0, 3, 18) = contact_cmd[2]*quadruped_model_.J_linear_wb_[2];
+    J_matrix.block(9, 0, 3, 18) = contact_cmd[3]*quadruped_model_.J_linear_wb_[3];
+
     Eigen::MatrixXd J_select = Eigen::MatrixXd::Zero(n_noslip_constrain, nx);
-    J_select.block(0, 12, n_noslip_constrain, 12) = J_matrix;
+    J_select.block(0, 18, n_noslip_constrain, 18) = J_matrix;
     Eigen::VectorXd vec_foot_vel_max = epsilon*Eigen::VectorXd::Ones(n_noslip_constrain);
     Eigen::VectorXd vec_foot_vel_min = -vec_foot_vel_max;
 
@@ -869,7 +754,7 @@ bool codmpcSolver::hpipmSolve(std::map<std::string,std::vector<double>> const &x
     double const mu = 0.5;
     double const fz_max = 500;
     double const fz_min = 0;
-    
+
     int n_friction_cone_constrain = 4*5;
     constrains_ += n_friction_cone_constrain;
     Eigen::MatrixXd friction_matrix_block(5, 3);
@@ -881,7 +766,7 @@ bool codmpcSolver::hpipmSolve(std::map<std::string,std::vector<double>> const &x
 
     Eigen::MatrixXd friction_matrix = Eigen::MatrixXd::Zero(n_friction_cone_constrain, nu);
     for (int i=0; i<n_contact_wb; ++i) {
-        friction_matrix.block(5*i, 6+3*i, 5, 3) = friction_matrix_block;
+        friction_matrix.block(5*i, 12+3*i, 5, 3) = friction_matrix_block;
     }
 
     Eigen::VectorXd vec_friction_min(n_friction_cone_constrain);
@@ -968,12 +853,7 @@ bool codmpcSolver::hpipmSolve(std::map<std::string,std::vector<double>> const &x
     std::chrono::time_point<std::chrono::high_resolution_clock> time_start = std::chrono::high_resolution_clock::now(); // 记录求解开始时间
     auto status = solver.solve(x0, qp, solution); //求解MPC问题
     std::chrono::duration<double> duration = std::chrono::high_resolution_clock::now() - time_start;
-    if (subsystems_name == "front") {
-        solver_time_[0] = duration.count();
-    } else if (subsystems_name == "back") {
-        solver_time_[1] = duration.count();
-        solver_time_wb_ = solver_time_[0] + solver_time_[1];
-    }
+    solver_time_wb_ = duration.count();
 
     if (status == hpipm::HpipmStatus::Success) {
         // 保存控制和状态序列
