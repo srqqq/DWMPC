@@ -157,12 +157,12 @@ void codmpcSolver::solve( bool &do_init,
             counter+=3;
         }
 
-        x0_[problem](30) = data_["wb"].dp[0][0] - data_[problem].dual[0][0]; //！！！这里给consensus的ref。consensus的ref=barw-y，python里再减去w，即r-y
-        x0_[problem](31) = data_["wb"].dp[0][1] - data_[problem].dual[0][1];
-        x0_[problem](32) = data_["wb"].dp[0][2] - data_[problem].dual[0][2];
-        x0_[problem](33) = data_["wb"].omega[0][0] - data_[problem].dual[0][3];
-        x0_[problem](34) = data_["wb"].omega[0][1] - data_[problem].dual[0][4];
-        x0_[problem](35) = data_["wb"].omega[0][2] - data_[problem].dual[0][5];
+        x0_[problem](30) = x0_map.at("dp")[0];
+        x0_[problem](31) = x0_map.at("dp")[1];
+        x0_[problem](32) = x0_map.at("dp")[2];
+        x0_[problem](33) = x0_map.at("omega")[2];
+        x0_[problem](34) = x0_map.at("omega")[1];
+        x0_[problem](35) = x0_map.at("omega")[0];
 
         x0_[problem](36) = 1.0;
 
@@ -222,9 +222,9 @@ void codmpcSolver::solve( bool &do_init,
             x_ref_[problem][k](31) = data_["wb"].dp[k][1] - data_[problem].dual[k][1];
             x_ref_[problem][k](32) = data_["wb"].dp[k][2] - data_[problem].dual[k][2];
 
-            x_ref_[problem][k](33) = data_["wb"].omega[k][0] - data_[problem].dual[k][3];
+            x_ref_[problem][k](33) = data_["wb"].omega[k][2] - data_[problem].dual[k][5];
             x_ref_[problem][k](34) = data_["wb"].omega[k][1] - data_[problem].dual[k][4];
-            x_ref_[problem][k](35) = data_["wb"].omega[k][2] - data_[problem].dual[k][5];
+            x_ref_[problem][k](35) = data_["wb"].omega[k][0] - data_[problem].dual[k][3];
 
             x_ref_[problem][k](36) = 1.0;
 
