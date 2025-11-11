@@ -80,4 +80,4 @@ class CircularTrajectoryPlanner:
         vx = self.speed * np.cos(current_angle)
         vy = self.speed * np.sin(current_angle)
         
-        return (x, y, vx, vy, yaw, self.yawrate)
+        return (x, y, yaw, vx, vy, self.yawrate)

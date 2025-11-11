@@ -32,7 +32,7 @@ add_library(${MODULE_LIBRARY_NAME} SHARED
 	# src/distributed_solver.cpp
 	src/codmpc_solver.cpp
 	src/pinocchio_model.cpp
-	src/robot_data_logger.cpp
+	# src/robot_data_logger.cpp # 在python中存储数据
 	# add other source files here
 )
 

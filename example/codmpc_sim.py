@@ -4,17 +4,13 @@ import numpy as np
 import time
 from scipy.spatial.transform import Rotation as R
 from trajectory_planner import CircularTrajectoryPlanner
+from robot_data_logger import RobotDataLogger
 
-'''
-功能设置
-'''
+''' 仿真功能设置 '''
 scene_name = "flat"  # 仿真场景选择，可选参数："flat", "stairs", "ramp", "perlin", "random_boxes", "random_pyramids"
-is_traj_mode_enable = False # True：自动跟随轨迹（按一下上方向键开始）；False：手动控制速度
+is_traj_mode_enable = True # True：自动跟随轨迹（按一下上方向键开始）；False：手动控制速度
 
-'''
-功能设置末尾
-'''
-
+''' Mujoco设置 '''
 robot_name = "go2"   # "aliengo", "mini_cheetah", "go2", "hyqreal", ...
 state_observables_names = tuple(QuadrupedEnv.ALL_OBS)  # return all available state observables
 
@@ -28,9 +24,9 @@ env = QuadrupedEnv(robot=robot_name,
                    state_obs_names=state_observables_names,  # Desired quantities in the 'state'
                    )
 obs = env.reset(random=False)
-
 env.render()
 
+''' MPC设置 '''
 mpc = pydwmpc.Dwmpc()
 mpc.init()
 mpc.startWalking()    
@@ -53,20 +49,28 @@ is_run_mpc = False
 
 is_traj_start = False
 traj_start_time = time.time()
+plan_state = [0] * 6
 
+ref_base_lin_vel = np.array([0.0, 0.0, 0.0])
+ref_base_ang_vel = np.array([0.0, 0.0, 0.0])
+
+''' 数据记录设置 '''
+is_log_enable = True # 是否开启数据记录
+robot_data_logger = RobotDataLogger("quadruped_data.csv")
+
+''' 主循环 '''
 try:
     while True:
 
+        '''获取Mujoco状态反馈'''
         qpos = env.mjData.qpos
         qvel = env.mjData.qvel # 线速度world系下，角速度local系下
-        if not is_traj_start:
-            ref_base_lin_vel, ref_base_ang_vel = env.target_base_vel() # ref_base_lin_vel和ref_base_ang_vel都是world系，详见函数注释
+        rotation = R.from_quat([qpos[4], qpos[5], qpos[6], qpos[3]]) # Define a quaternion (x, y, z, w)
+        euler_angles = rotation.as_euler('ZYX', degrees=False) # 注意：旋转顺序大小写字母表达的意思不同！！！大写表示转轴！！！
 
-        # 轨迹生成部分
+        ''' 轨迹生成部分 '''
         if is_traj_mode_enable and not is_traj_start and ref_base_lin_vel[0] >= 0.01:
             is_traj_start = True
-            rotation = R.from_quat([qpos[4], qpos[5], qpos[6], qpos[3]]) # Define a quaternion (x, y, z, w)
-            euler_angles = rotation.as_euler('ZYX', degrees=False) # 注意：旋转顺序大小写字母表达的意思不同！！！大写表示转轴！！！
             traj_planner = CircularTrajectoryPlanner(
                 x0=qpos[0],           # 初始X位置
                 y0=qpos[1],           # 初始Y位置
@@ -77,11 +81,17 @@ try:
             traj_start_time = time.time()
 
         if is_traj_start:
+            ''' 自动跟踪轨迹 '''
             traj_duration = time.time() - traj_start_time
             plan_state = traj_planner.get_plan_state(traj_duration)
-            ref_base_lin_vel = np.array([plan_state[2], plan_state[3], 0.0])
+            ref_base_lin_vel = np.array([plan_state[3], plan_state[4], 0.0])
             ref_base_ang_vel = np.array([0.0, 0.0, plan_state[5]])
+        else:
+            ''' 手动控制速度 '''
+            ref_base_lin_vel, ref_base_ang_vel = env.target_base_vel() # ref_base_lin_vel和ref_base_ang_vel都是world系，详见函数注释
+            plan_state = [qpos[0], qpos[1], euler_angles[0], ref_base_lin_vel[0], ref_base_lin_vel[1], ref_base_ang_vel[2]]
 
+        ''' MPC定时调度 '''
         mpc_duration = time.time() - mpc_start_time
         if mpc_duration >= mpc_inerval:
             is_run_mpc = True
@@ -129,7 +139,12 @@ try:
                 tau,
                 des_q,
                 des_dq)
+            
+            if is_log_enable:
+                full_data = mpc.getFullPrediction()
+                robot_data_logger.log_data(plan_state, full_data)
 
+        ''' 底层关节控制器 '''
         action_torque = tau + Kp*(des_q.getList() - qpos[7:]) + Kd*(des_dq.getList() - qvel[6:])
         action = np.zeros(env.mjModel.nu)
         action[env.legs_tau_idx.FL] = action_torque[:3]

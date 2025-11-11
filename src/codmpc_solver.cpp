@@ -47,9 +47,9 @@ void codmpcSolver::init(const parameter &config_param)
     protocolInit();
 #endif
 
-#ifdef DEBUG_MODE
-    data_logger_.init("quadruped_data.csv");
-#endif
+// #ifdef DEBUG_MODE
+//     data_logger_.init("quadruped_data.csv");
+// #endif
 
     std::cout << "codmpcSolver initialized!!!" << std::endl;
 
@@ -539,13 +539,13 @@ void codmpcSolver::solve( bool &do_init,
     }
     // check stopping criteria
     //TODO
-#ifdef DEBUG_MODE
-    std::vector<double> residual_l2_norm_time;
-    residual_l2_norm_time.push_back(calculateL2Norm(data_["front"].residual[0]));
-    residual_l2_norm_time.push_back(calculateL2Norm(data_["back"].residual[0]));
+// #ifdef DEBUG_MODE
+//     std::vector<double> residual_l2_norm_time;
+//     residual_l2_norm_time.push_back(calculateL2Norm(data_["front"].residual[0]));
+//     residual_l2_norm_time.push_back(calculateL2Norm(data_["back"].residual[0]));
 
-    data_logger_.logData(x0_, x_ref_, u_, u_ref_, residual_l2_norm_time, solver_time_wb_);
-#endif
+//     data_logger_.logData(x0_, x_ref_, u_, u_ref_, residual_l2_norm_time, solver_time_wb_);
+// #endif
 
     do_init = false;
 }
