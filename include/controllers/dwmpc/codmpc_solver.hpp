@@ -13,9 +13,9 @@
 #include <csignal>
 #include <string>
 #include "controllers/dwmpc/pinocchio_model.hpp"
-#ifdef DEBUG_MODE
-#include "controllers/dwmpc/robot_data_logger.hpp"
-#endif
+// #ifdef DEBUG_MODE
+// #include "controllers/dwmpc/robot_data_logger.hpp"
+// #endif
 
 #ifdef USE_QPOASES
 #include "qpOASES.hpp"
@@ -121,9 +121,9 @@ class codmpcSolver {
 
         double calculateL2Norm(std::vector<double> const &vec);
 
-#ifdef DEBUG_MODE
-        RobotDataLogger data_logger_;
-#endif
+// #ifdef DEBUG_MODE
+//         RobotDataLogger data_logger_;
+// #endif
 };
 
 #endif
