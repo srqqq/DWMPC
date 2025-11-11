@@ -3,12 +3,13 @@ import pydwmpc
 import numpy as np
 import time
 from scipy.spatial.transform import Rotation as R
-from trajectory_planner import CircularTrajectoryPlanner
+from trajectory_planner import TrajectoryPlanner
 from robot_data_logger import RobotDataLogger
 
-''' 仿真功能设置 '''
+''' 仿真功能开关 '''
 scene_name = "flat"  # 仿真场景选择，可选参数："flat", "stairs", "ramp", "perlin", "random_boxes", "random_pyramids"
 is_traj_mode_enable = True # True：自动跟随轨迹（按一下上方向键开始）；False：手动控制速度
+is_log_enable = True # True：开启数据记录 False：关闭数据记录
 
 ''' Mujoco设置 '''
 robot_name = "go2"   # "aliengo", "mini_cheetah", "go2", "hyqreal", ...
@@ -48,18 +49,18 @@ mpc_inerval = 1.0/mpc_frequency
 mpc_start_time = time.time()
 is_run_mpc = False
 
-# is_traj_mode_enable = True # 想手动控制速度需要把它改为False
-is_traj_mode_enable = False # 想手动控制速度需要把它改为False
+''' 轨迹设置 '''
 is_traj_start = False
 traj_start_time = time.time()
 plan_state = [0] * 6
-
 ref_base_lin_vel = np.array([0.0, 0.0, 0.0])
 ref_base_ang_vel = np.array([0.0, 0.0, 0.0])
+Kp_pos = 1.5  # 位置环增益
+Kp_yaw = 1 # 航向环增益
 
 ''' 数据记录设置 '''
-is_log_enable = True # 是否开启数据记录
-robot_data_logger = RobotDataLogger("quadruped_data.csv")
+if is_log_enable:
+    robot_data_logger = RobotDataLogger("quadruped_data.csv")
 
 ''' 主循环 '''
 try:
@@ -74,21 +75,25 @@ try:
         ''' 轨迹生成部分 '''
         if is_traj_mode_enable and not is_traj_start and ref_base_lin_vel[0] >= 0.01:
             is_traj_start = True
-            traj_planner = CircularTrajectoryPlanner(
+            traj_planner = TrajectoryPlanner(
                 x0=qpos[0],           # 初始X位置
                 y0=qpos[1],           # 初始Y位置
                 yaw0=euler_angles[0], # 初始航向角
                 radius=1.0,           # 轨迹半径
-                speed=0.2,            # 线速度
-                clockwise=False)      # 逆时针运动
+                speed=0.2)            # 线速度
+
             traj_start_time = time.time()
 
         if is_traj_start:
             ''' 自动跟踪轨迹 '''
             traj_duration = time.time() - traj_start_time
             plan_state = traj_planner.get_plan_state(traj_duration)
-            ref_base_lin_vel = np.array([plan_state[3], plan_state[4], 0.0])
-            ref_base_ang_vel = np.array([0.0, 0.0, plan_state[5]])
+            velx_cmd = plan_state[3] + Kp_pos * (plan_state[0] - qpos[0])
+            vely_cmd = plan_state[4] + Kp_pos * (plan_state[1] - qpos[1])
+            yawrate_cmd = plan_state[5] + Kp_yaw * TrajectoryPlanner.normalize_angle(plan_state[2] - euler_angles[0])
+
+            ref_base_lin_vel = np.array([velx_cmd, vely_cmd, 0.0])
+            ref_base_ang_vel = np.array([0.0, 0.0, yawrate_cmd])
         else:
             ''' 手动控制速度 '''
             ref_base_lin_vel, ref_base_ang_vel = env.target_base_vel() # ref_base_lin_vel和ref_base_ang_vel都是world系，详见函数注释
