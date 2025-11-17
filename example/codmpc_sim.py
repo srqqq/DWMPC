@@ -13,7 +13,6 @@ is_log_enable = True # True：开启数据记录 False：关闭数据记录
 
 ''' Mujoco设置 '''
 robot_name = "go2"   # "aliengo", "mini_cheetah", "go2", "hyqreal", ...
-scene_name = "flat"  # "flat", "stairs", "ramp", "perlin", "random_boxes", "random_pyramids"
 state_observables_names = tuple(QuadrupedEnv.ALL_OBS)  # return all available state observables
 
 sim_frequency = 200.0

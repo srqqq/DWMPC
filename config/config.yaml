@@ -2,8 +2,8 @@ n_problem : 1
 n_joint_wb : 12
 n_contact_wb : 4
 n_legs : 4
-n_state : 49   # half robot
-n_control : 24  # half robot
+n_state : 49   # whole robot
+n_control : 24  # whole robot
 
 # GO2 and GO1 parameters
 q0 : [0, 0.9, -1.8, 0, 0.9, -1.8, 0, 0.9, -1.8, 0, 0.9, -1.8]
@@ -34,17 +34,17 @@ omega: [0,0,0]
 
 # 默认参数
 weight_p: [1e1,1e1,1e3]
-weight_quat: [1e5,1e5,0]
-weight_q:  [1e1]
+weight_quat: [1e3,1e3,0]
+weight_q:  [10]
 weight_dp: [1e3,1e3,1e3]
-weight_omega: [1e4,1e4,1e4]
+weight_omega: [1e3,1e3,1e3]
 weight_dq: [1e0]
 weight_tau: [1e-2]
 weight_grf: [1e-2]
 weight_foot_swing: [1e4,1e4,1e5]
 weight_foot_stance: [1e4,1e4,1e5]
 weight_consensus: [2]
-gamma: [0.9]
+gamma: [1.0]
 
 # 原始参数
 # weight_p: [1e1,1e1,1e3]

@@ -390,9 +390,9 @@ void codmpcSolver::solve( bool &do_init,
             data_[problem].dp[k][2] = x[k](20);
 
             //omega
-            data_[problem].omega[k][0] = x[k](21);
+            data_[problem].omega[k][0] = x[k](23);
             data_[problem].omega[k][1] = x[k](22);
-            data_[problem].omega[k][2] = x[k](23);
+            data_[problem].omega[k][2] = x[k](21);
 
             //dq
             counter = 0;

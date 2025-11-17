@@ -32,10 +32,10 @@ class RobotDataLogger:
     def parse_full_data(self, full_data):
         """解析全量数据，筛选出需要保存的数据"""
 
-        p = full_data["front"].p[0].getList() # 3
-        rpy = full_data["front"].rpy[0].getList() # 3
-        dp =  full_data["front"].dp[0].getList() # 3
-        omega = full_data["front"].omega[0].getList() #3
+        p = full_data["wb"].p[0].getList() # 3
+        rpy = full_data["wb"].rpy[0].getList() # 3
+        dp =  full_data["wb"].dp[0].getList() # 3
+        omega = full_data["wb"].omega[0].getList() #3
         foot = full_data["wb"].foot[0].getList() # 12
 
         q = full_data["wb"].q[0].getList() # 12
