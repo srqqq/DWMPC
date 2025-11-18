@@ -7,7 +7,7 @@ from trajectory_planner import TrajectoryPlanner
 from robot_data_logger import RobotDataLogger
 
 ''' 仿真功能开关 '''
-scene_name = "perlin"  # 仿真场景选择，可选参数："flat", "stairs", "ramp", "perlin", "random_boxes", "random_pyramids"
+scene_name = "perlin"  # 仿真场景选择，可选参数："flat", "stairs", "ramp", "perlin", "slippery", "random_boxes", "random_pyramids"
 is_traj_mode_enable = True # True：自动跟随轨迹（按一下上方向键开始）；False：手动控制速度
 is_log_enable = True # True：开启数据记录 False：关闭数据记录
 

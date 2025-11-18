@@ -23,6 +23,9 @@ void quadrupedModel::modelInit(parameter const &config_param) {
     J_linear_wb_.resize(config_param_.n_contact_wb);
     J_linear_sub_.resize(config_param_.n_contact_wb);
 
+    // local_J_linear_wb_.resize(config_param_.n_contact_wb);
+    // local_J_linear_sub_.resize(config_param_.n_contact_wb);
+
     // 设置文件路径
     std::string urdf_filename{"/usr/include/dls2/controllers/dwmpc/urdf/go2.urdf"};
 
@@ -129,6 +132,17 @@ void quadrupedModel::modelUpdate(std::map<std::string,std::vector<double>> const
         J_temp.block(0, 0, 3, 6) = J_linear_wb_[i].block(0, 0, 3, 6);
         J_temp.block(0, 6, 3, 6) = J_linear_wb_[i].block(0, 6+3*s_idx, 3, 6);
         J_linear_sub_[i] = J_temp;
+
+        // pinocchio::LOCAL
+        // Eigen::MatrixXd local_J = Eigen::MatrixXd::Zero(6, pin_model_.nv);
+        // pinocchio::getFrameJacobian(pin_model_, pin_data_, frame_id, pinocchio::LOCAL, local_J);
+        // //wb
+        // local_J_linear_wb_[i] = local_J.topRows(3);
+        // //sub       
+        // Eigen::MatrixXd local_J_temp = Eigen::MatrixXd::Zero(3, 12);
+        // local_J_temp.block(0, 0, 3, 6) = local_J_linear_wb_[i].block(0, 0, 3, 6);
+        // local_J_temp.block(0, 6, 3, 6) = local_J_linear_wb_[i].block(0, 6+3*s_idx, 3, 6);
+        // local_J_linear_sub_[i] = local_J_temp;
     }
 
     // 更新子系统

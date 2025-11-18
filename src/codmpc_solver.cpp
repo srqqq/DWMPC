@@ -857,6 +857,8 @@ bool codmpcSolver::hpipmSolve(std::map<std::string,std::vector<double>> const &x
     Eigen::MatrixXd J_matrix = Eigen::MatrixXd::Zero(n_noslip_constrain, 12);
     J_matrix.block(0, 0, 3, 12) = contact_cmd[s_idx]*quadruped_model_.J_linear_sub_[s_idx];
     J_matrix.block(3, 0, 3, 12) = contact_cmd[s_idx+1]*quadruped_model_.J_linear_sub_[s_idx+1];
+    // J_matrix.block(0, 0, 3, 12) = contact_cmd[s_idx]*quadruped_model_.local_J_linear_sub_[s_idx];
+    // J_matrix.block(3, 0, 3, 12) = contact_cmd[s_idx+1]*quadruped_model_.local_J_linear_sub_[s_idx+1];
     Eigen::MatrixXd J_select = Eigen::MatrixXd::Zero(n_noslip_constrain, nx);
     J_select.block(0, 12, n_noslip_constrain, 12) = J_matrix;
     Eigen::VectorXd vec_foot_vel_max = epsilon*Eigen::VectorXd::Ones(n_noslip_constrain);
