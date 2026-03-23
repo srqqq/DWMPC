@@ -13,6 +13,9 @@
 #include <csignal>
 #include <string>
 #include "controllers/dwmpc/pinocchio_model.hpp"
+
+#include "controllers/dwmpc/codmpc_tools.hpp"
+
 // #ifdef DEBUG_MODE
 // #include "controllers/dwmpc/robot_data_logger.hpp"
 // #endif
@@ -119,10 +122,8 @@ class codmpcSolver {
         std::map<std::string, std::vector<Eigen::VectorXd>> consensus_ref_; // 参考一致项序列
 
         int constrains_;
-        std::vector<double> solver_time_;
-        double solver_time_wb_;
 
-        double calculateL2Norm(std::vector<double> const &vec);
+        TimerManager tm_;
 
 // #ifdef DEBUG_MODE
 //         RobotDataLogger data_logger_;

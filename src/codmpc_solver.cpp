@@ -40,9 +40,6 @@ void codmpcSolver::init(const parameter &config_param)
 
     quadruped_model_.modelInit(config_param);
 
-    solver_time_ = std::vector<double>(2, 0.0);
-    solver_time_wb_ = 0.0;
-
 #ifdef USE_FPGA
     protocolInit();
 #endif
@@ -106,7 +103,10 @@ void codmpcSolver::solve( bool &do_init,
     // main loop  (number of iteration)
     //problem loop
     // ============       MODEL       ============
+    tm_.start("modelUpdate");
     quadruped_model_.modelUpdate(x0_map); // 放在循环外面
+    tm_.stop("modelUpdate");
+    tm_.print("modelUpdate");
 
     for (auto problem : config_param_.subsystems_name)
     {   
@@ -538,14 +538,6 @@ void codmpcSolver::solve( bool &do_init,
         // }
     }
     // check stopping criteria
-    //TODO
-// #ifdef DEBUG_MODE
-//     std::vector<double> residual_l2_norm_time;
-//     residual_l2_norm_time.push_back(calculateL2Norm(data_["front"].residual[0]));
-//     residual_l2_norm_time.push_back(calculateL2Norm(data_["back"].residual[0]));
-
-//     data_logger_.logData(x0_, x_ref_, u_, u_ref_, residual_l2_norm_time, solver_time_wb_);
-// #endif
 
     do_init = false;
 }
@@ -565,14 +557,6 @@ void codmpcSolver::getControl(std::vector<double> &des_q,std::vector<double> &de
 void codmpcSolver::getData(std::map<std::string,pdata> &data)
 {  
     data = data_;
-}
-
-double codmpcSolver::calculateL2Norm(std::vector<double> const &vec) {
-    double sumOfSquares = 0.0;
-    for (const auto& element : vec) {
-        sumOfSquares += element*element;
-    }
-    return std::sqrt(sumOfSquares);
 }
 
 #ifdef USE_FPGA
@@ -964,15 +948,11 @@ bool codmpcSolver::hpipmSolve(std::map<std::string,std::vector<double>> const &x
     }
     solution[N].x = x_[subsystems_name][N];
 
-    std::chrono::time_point<std::chrono::high_resolution_clock> time_start = std::chrono::high_resolution_clock::now(); // 记录求解开始时间
+    tm_.start("hpipm");
     auto status = solver.solve(x0, qp, solution); //求解MPC问题
-    std::chrono::duration<double> duration = std::chrono::high_resolution_clock::now() - time_start;
-    if (subsystems_name == "front") {
-        solver_time_[0] = duration.count();
-    } else if (subsystems_name == "back") {
-        solver_time_[1] = duration.count();
-        solver_time_wb_ = solver_time_[0] + solver_time_[1];
-    }
+    tm_.stop("hpipm");
+
+    tm_.print("hpipm");
 
     if (status == hpipm::HpipmStatus::Success) {
         // 保存控制和状态序列
