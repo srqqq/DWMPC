@@ -1,9 +1,13 @@
 n_problem : 2
 n_joint_wb : 12
 n_contact_wb : 4
-n_legs : 4
-n_state : 31   # half robot
+n_state : 30   # half robot
 n_control : 18  # half robot
+torque_limit: [23.7, 23.7, 45.43, 23.7, 23.7, 45.43, 23.7, 23.7, 45.43, 23.7, 23.7, 45.43]
+friction_coefficient: 0.5
+normal_force_min: 0.0
+normal_force_max: 500.0
+no_slip_velocity: 0.005
 
 # GO2 and GO1 parameters
 q0 : [0, 0.9, -1.8, 0, 0.9, -1.8, 0, 0.9, -1.8, 0, 0.9, -1.8]
@@ -12,8 +16,6 @@ foot0 : [0.192, 0.142, 0.024,0.192, -0.142, 0.024, -0.195, 0.142, 0.024,-0.195, 
 # q0 : [0.2,0.8,-1.8,-0.2,0.8,-1.8,0.2,0.8,-1.8,-0.2,0.8,-1.8]
 # foot0 : [0.27092872, 0.174, 0.02074775,0.27092872,-0.174, 0.0207477,-0.20887128, 0.174, 0.02074775,-0.20887128, -0.174  ,  0.02074775]  
 
-max_iteration : 20
-receding_horizon : true
 subsystems_name : [front,back,wb]
 subsystems_map_joint: 
   front: [0,1,2,3,4,5]
@@ -28,7 +30,6 @@ subsystems_map_contact:
 #GO2 and GO1
 robot_height: [0.27]
 step_height: [0.1] # 随机箱子0.2
-quat: [0,0,0,1] 
 dp: [0,0,0]
 omega: [0,0,0]
 

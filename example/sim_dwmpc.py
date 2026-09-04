@@ -31,16 +31,14 @@ mpc = pydwmpc.Dwmpc()
 mpc.init()
 mpc.startWalking()    
 timer = 0
-tau = pydwmpc.DoubleVector([0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0])
-des_q = pydwmpc.DoubleVector([0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0])
-des_dq = pydwmpc.DoubleVector([0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0])
-contact = pydwmpc.DoubleVector([0.0,0.0,0.0,0.0])
+tau = np.zeros(12)
+des_q = np.zeros(12)
+des_dq = np.zeros(12)
 
 Kp = 20
 Kd = 3
 # mpc.setGaitParam(0.8,0.6,1)
 mpc.setStepHeight(0.1)
-# mpc.goHandStand()
 
 while True:
     
@@ -58,7 +56,7 @@ while True:
         quat[2] = qpos[6]
         quat[3] = qpos[3]
 
-        ref_base_lin_vel, ref_base_ang_vel = env.target_base_vel()
+        ref_base_lin_vel, ref_base_ang_vel = env.target_base_vel(frame='world')
         p = qpos[:3].copy()
         q = qpos[7:].copy()
 
@@ -72,7 +70,7 @@ while True:
         # dq[0] = - dq[0]
         # dq[6] = - dq[6]
 
-        mpc.run(p,
+        result = mpc.run(p,
             quat,
             q,
             dp,
@@ -81,15 +79,11 @@ while True:
             1/mpc_frequency,
             contact_op,
             foot_op,
-            env.heading_orientation_SO3.transpose()@ref_base_lin_vel,
-            ref_base_ang_vel,
-            np.array([0.0, 0.0, 0.0, 1.0]),
-            contact,
-            tau,
-            des_q,
-            des_dq)
-        
-        mpc.prepare()
+            ref_base_lin_vel,
+            ref_base_ang_vel)
+        tau = np.asarray(result.torque)
+        des_q = np.asarray(result.joint_position)
+        des_dq = np.asarray(result.joint_velocity)
         
         # tau[0] = - tau[0]
         # tau[6] = - tau[6]
@@ -97,7 +91,7 @@ while True:
         # des_q[6] = - des_q[6]
         # des_dq[0] = - des_dq[0]
         # des_dq[6] = - des_dq[6]
-    action_torque = tau + Kp*(des_q.getList() - qpos[7:]) + Kd*(des_dq.getList() - qvel[6:])
+    action_torque = tau + Kp*(des_q - qpos[7:]) + Kd*(des_dq - qvel[6:])
     action = np.zeros(env.mjModel.nu)
     action[env.legs_tau_idx.FL] = action_torque[:3]
     action[env.legs_tau_idx.FR] = action_torque[3:6]

@@ -1,89 +1,38 @@
 #include "controllers/dwmpc/dwmpc.hpp"
+#include <cstdlib>
+
+namespace
+{
+    std::string configPath()
+    {
+        const char *override_path = std::getenv("DWMPC_CONFIG_PATH");
+        return override_path != nullptr
+            ? override_path
+            : "/usr/include/dls2/controllers/dwmpc/config/config.yaml";
+    }
+}
 
 namespace controllers
 {
-    Dwmpc::Dwmpc() : ocp_(), config(YAML::LoadFile("/usr/include/dls2/controllers/dwmpc/config/config.yaml"))
+    Dwmpc::Dwmpc() : ocp_(), config(YAML::LoadFile(configPath()))
     {}
     Dwmpc::~Dwmpc()
     { }
     void Dwmpc::setWeight(const std::map<std::string,std::vector<double>> &weight_vec)
     {
         weight_vec_ = weight_vec;
-    }
-    void Dwmpc::reorder_contact(Eigen::MatrixXd &contact)
-    {
-        Eigen::MatrixXd c;
-        c.setZero(3,n_contact_wb_);
-        c.col(0) = contact.col(1);
-        c.col(1) = contact.col(0);
-        c.col(2) = contact.col(3);
-        c.col(3) = contact.col(2);
-        contact = c;
-    }
-    void Dwmpc::reorder_contact(Eigen::Vector4d &contact)
-    {
-        Eigen::Vector4d c;
-        c[0] = contact[1];
-        c[1] = contact[0];
-        c[2] = contact[3];
-        c[3] = contact[2];
-        contact = c;
-    }
-    void Dwmpc::reorder_contact(std::vector<double> &contact)
-    {
-        std::vector<double> c;
-        c.push_back(contact[1]);
-        c.push_back(contact[0]);
-        c.push_back(contact[3]);
-        c.push_back(contact[2]);
-        contact = c;
-    }
-    void Dwmpc::reorder_joints(Eigen::VectorXd &joint,const  bool in)
-    {
-        Eigen::VectorXd j;
-        j.setZero(n_joint_wb_);
-        j.segment<3>(0) = joint.segment<3>(3);
-        j.segment<3>(3) = joint.segment<3>(0);
-        j.segment<3>(6) = joint.segment<3>(9);
-        j.segment<3>(9) = joint.segment<3>(6);
-        if(in)
-        {
-            j[3] = -j[3];
-            j[9] = -j[9];
-        }
-        else
-        {
-            j[0] = -j[0];
-            j[6] = -j[6];
-        }
-        joint = j;
-    }
-    void Dwmpc::reorder_joints(std::vector<double> &joint,const bool in)
-    {
-        std::vector<double> j;
-        j.push_back(joint[3]);
-        j.push_back(joint[4]);
-        j.push_back(joint[5]);
-        j.push_back(joint[0]);
-        j.push_back(joint[1]);
-        j.push_back(joint[2]);
-        j.push_back(joint[9]);
-        j.push_back(joint[10]);
-        j.push_back(joint[11]);
-        j.push_back(joint[6]);
-        j.push_back(joint[7]);
-        j.push_back(joint[8]);
-        if(in)
-        {
-            j[3] = -j[3];
-            j[9] = -j[9];
-        }
-        else
-        {
-            j[0] = -j[0];
-            j[6] = -j[6];
-        }
-        joint = j;
+        weights_.position = Eigen::Map<const Eigen::Vector3d>(weight_vec_.at("p").data());
+        weights_.orientation = Eigen::Map<const Eigen::Vector3d>(weight_vec_.at("quat").data());
+        weights_.joint_position = weight_vec_.at("q").at(0);
+        weights_.linear_velocity = Eigen::Map<const Eigen::Vector3d>(weight_vec_.at("dp").data());
+        weights_.angular_velocity = Eigen::Map<const Eigen::Vector3d>(weight_vec_.at("omega").data());
+        weights_.joint_velocity = weight_vec_.at("dq").at(0);
+        weights_.torque = weight_vec_.at("tau").at(0);
+        weights_.ground_reaction_force = weight_vec_.at("grf").at(0);
+        weights_.foot_stance = Eigen::Map<const Eigen::Vector3d>(weight_vec_.at("foot_stance").data());
+        weights_.foot_swing = Eigen::Map<const Eigen::Vector3d>(weight_vec_.at("foot_swing").data());
+        weights_.consensus = weight_vec_.at("consensus").at(0);
+        weights_.gamma = weight_vec_.at("gamma").at(0);
     }
     void Dwmpc::init()
     {   
@@ -111,11 +60,7 @@ namespace controllers
        
         parameter config_param{};
 
-        config_param.max_iteration = config["max_iteration"].as<int>();
-        
         config_param.n_problem = config["n_problem"].as<int>();
-        
-        config_param.receding_horizon = config["receding_horizon"].as<bool>();
         
         config_param.subsystems_name = config["subsystems_name"].as<std::vector<std::string>>();
 
@@ -141,6 +86,31 @@ namespace controllers
 
         config_param.n_control = config["n_control"].as<int>();
 
+        config_param.torque_limit = config["torque_limit"].as<std::vector<double>>();
+        if (config_param.torque_limit.size() != static_cast<std::size_t>(n_joint_wb_))
+        {
+            throw std::invalid_argument("torque_limit must contain one positive limit per joint");
+        }
+        for (double limit : config_param.torque_limit)
+        {
+            if (limit <= 0.0)
+            {
+                throw std::invalid_argument("torque_limit values must be positive");
+            }
+        }
+
+        config_param.friction_coefficient = config["friction_coefficient"].as<double>();
+        config_param.normal_force_min = config["normal_force_min"].as<double>();
+        config_param.normal_force_max = config["normal_force_max"].as<double>();
+        config_param.no_slip_velocity = config["no_slip_velocity"].as<double>();
+        if (config_param.friction_coefficient <= 0.0
+            || config_param.normal_force_min < 0.0
+            || config_param.normal_force_max < config_param.normal_force_min
+            || config_param.no_slip_velocity < 0.0)
+        {
+            throw std::invalid_argument("invalid contact constraint parameters");
+        }
+
         ocp_.init(config_param);
 
         // set the desired to default values
@@ -148,8 +118,6 @@ namespace controllers
         desired_["robot_height"] = config["robot_height"].as<std::vector<double>>();
         
         desired_["step_height"] = config["step_height"].as<std::vector<double>>();
-
-        desired_["quat"] = config["quat"].as<std::vector<double>>();
 
         desired_["rpy"] = std::vector<double>(3,0);
         
@@ -180,6 +148,7 @@ namespace controllers
         weight_vec_["consensus"] = config["weight_consensus"].as<std::vector<double>>();
 
         weight_vec_["gamma"] = config["gamma"].as<std::vector<double>>();
+        setWeight(weight_vec_);
 
         timer_.setDelta(config["delta"].as<std::vector<double>>());
         timer_.setParam(config["duty_factor"].as<double>(),config["step_freq"].as<double>());
@@ -188,272 +157,72 @@ namespace controllers
         std::cout << "Dwmpc initialized!!!" << std::endl;
 
     }
-    void Dwmpc::run(const Eigen::Ref<const Eigen::VectorXd> &p,
-                     const Eigen::Ref<Eigen::Vector4d> &quat,
-                     const Eigen::Ref<const Eigen::VectorXd> &q_op,
-                     const Eigen::Ref<const Eigen::VectorXd> &dp,
-                     const Eigen::Ref<const Eigen::VectorXd> &omega,
-                     const Eigen::Ref<const Eigen::VectorXd> &dq_op,
-                     const double &loop_dt,
-                     const Eigen::Ref<const Eigen::Vector4d> &current_contact,
-                     const Eigen::Ref<const Eigen::MatrixXd> &foot_op,
-                     const Eigen::Ref<const Eigen::VectorXd> &desired_linear_speed,
-                     const Eigen::Ref<const Eigen::VectorXd> &desired_angular_speed,
-                     const Eigen::Ref<Eigen::Vector4d> &desired_orientation,
-                     std::vector<double> &des_contact,
-                     std::vector<double> &des_tau ,
-                     std::vector<double> &des_q,
-                     std::vector<double> &des_dq)
+    MpcResult Dwmpc::run(const Eigen::Ref<const Eigen::VectorXd> &p,
+                         const Eigen::Ref<Eigen::Vector4d> &quat_xyzw,
+                         const Eigen::Ref<const Eigen::VectorXd> &q,
+                         const Eigen::Ref<const Eigen::VectorXd> &linear_velocity,
+                         const Eigen::Ref<const Eigen::VectorXd> &angular_velocity,
+                         const Eigen::Ref<const Eigen::VectorXd> &joint_velocity,
+                         const double &loop_dt,
+                         const Eigen::Ref<const Eigen::Vector4d> &measured_contact,
+                         const Eigen::Ref<const Eigen::MatrixXd> &foot_position,
+                         const Eigen::Ref<const Eigen::VectorXd> &desired_linear_speed,
+                         const Eigen::Ref<const Eigen::VectorXd> &desired_angular_speed)
     {
-        Eigen::Quaterniond quat_(quat[3],quat[0],quat[1],quat[2]);
-        Eigen::Quaterniond desired_orientation_(desired_orientation[3],desired_orientation[0],desired_orientation[1],desired_orientation[2]);
-        std::vector<Eigen::Vector3d> temp_sphere_pos;
-        std::vector<Eigen::Vector4d> temp_sphere_color;
-        std::vector<Eigen::Vector3d> temp_arrow_pos;
-        std::vector<Eigen::Vector4d> temp_arrow_color;
-        std::vector<Eigen::Vector4d> temp_arrow_quat;
-        std::vector<double> arrow_length;
-        std::vector<double> sphere_radius;
-        run(p,quat_,q_op,dp,omega,dq_op,loop_dt,current_contact,foot_op.transpose(),desired_linear_speed,desired_angular_speed,desired_orientation_,temp_sphere_pos,temp_sphere_color,sphere_radius,temp_arrow_pos,temp_arrow_color,temp_arrow_quat,arrow_length,des_contact,des_tau,des_q,des_dq);
-    }
-    void Dwmpc::run(const Eigen::VectorXd &p,
-                    const Eigen::Quaterniond &quat,
-                    const Eigen::VectorXd &q_op,
-                    const Eigen::VectorXd &dp,
-                    const Eigen::VectorXd &omega,
-                    const Eigen::VectorXd &dq_op,
-                    const double &loop_dt,
-                    const Eigen::Vector4d &current_contact,
-                    const Eigen::MatrixXd &foot_op,
-                    const Eigen::VectorXd &desired_linear_speed,
-                    const Eigen::VectorXd &desired_angular_speed,
-                    const Eigen::Quaterniond &desired_orientation,
-                    std::vector<Eigen::Vector3d> &sphere_pos,
-                    std::vector<Eigen::Vector4d> &sphere_color,
-                    std::vector<double> &sphere_radius,
-                    std::vector<Eigen::Vector3d> &arrow_pos,
-                    std::vector<Eigen::Vector4d> &arrow_color,
-                    std::vector<Eigen::Vector4d> &arrow_quat,
-                    std::vector<double> &arrow_length,
-                    std::vector<double> &des_contact,
-                    std::vector<double> &des_tau ,
-                    std::vector<double> &des_q,
-                    std::vector<double> &des_dq)
-    {   
-        // build the initial condition map
-        std::map<std::string,std::vector<double>> x0_map;
-        x0_map["p"] = {p[0],p[1],p[2]};
-        x0_map["quat"] = {quat.x(),quat.y(),quat.z(),quat.w()};
-        Eigen::Vector3d rpy_init = quatToRPY(quat);
-        x0_map["rpy"] = {rpy_init(0), rpy_init(1), rpy_init(2)};
-        x0_map["dp"] = {dp[0],dp[1],dp[2]};
-        x0_map["omega"] = {omega[0],omega[1],omega[2]};
-        x0_map["contact"] = {current_contact[0],current_contact[1],current_contact[2],current_contact[3]};
-        Eigen::Quaterniond desired_quat = desired_orientation;
-        //initialize the timer        
-        std::vector<double> contact0 {timer_.run(loop_dt)};
-        des_contact = contact0;
-
-        x0_map["contact_cmd"] = contact0;
-
-        // reorder_contact(des_contact);
-
-        time_ += loop_dt;
-        //save t and init values for next iteration
-        std::vector <double> t{};
-        std::vector <bool> init{};
-
-        
-        timer_.get(t,init);
-        
-        Eigen::VectorXd q = q_op;
-        Eigen::VectorXd dq = dq_op;
-        
-        // reorder_joints(q,true);
-        // reorder_joints(dq,true);
-
-        for (auto i{0};i < n_joint_wb_;i++)
+        if (p.size() != 3 || q.size() != kNumJoints || linear_velocity.size() != 3
+            || angular_velocity.size() != 3 || joint_velocity.size() != kNumJoints
+            || foot_position.rows() != kNumContacts || foot_position.cols() != 3)
         {
-            x0_map["q"].push_back(q[i]);
-            x0_map["dq"].push_back(dq[i]);
+            throw std::invalid_argument("invalid Dwmpc::run input dimensions");
         }
 
-        Eigen::MatrixXd foot = foot_op;
-        // reorder_contact(foot);
-        upate_terrain_height(contact0,foot);
+        const Eigen::Quaterniond orientation(quat_xyzw[3], quat_xyzw[0], quat_xyzw[1], quat_xyzw[2]);
+        RobotState state;
+        state.position = p;
+        state.rpy = quatToRPY(orientation);
+        state.joint_position = q;
+        state.linear_velocity = linear_velocity;
+        state.angular_velocity = angular_velocity;
+        state.joint_velocity = joint_velocity;
+        state.measured_contact = measured_contact;
 
-        // Eigen::MatrixXd grf_init = grf_op; //不用传感器反馈值，有问题
-        for(int leg=0; leg < n_contact_wb_; ++leg){
-            for(int i=0; i<3; ++i) {
-                x0_map["foot"].push_back(foot(i, leg));
-                // x0_map["grf"].push_back(grf_init(i, leg));
-            }
+        const std::vector<double> contact_vector = timer_.run(loop_dt);
+        state.commanded_contact = Eigen::Map<const ContactVector>(contact_vector.data());
+        time_ += loop_dt;
+
+        std::vector<double> timer_phase;
+        std::vector<bool> timer_initialized;
+        timer_.get(timer_phase, timer_initialized);
+
+        const Eigen::MatrixXd feet_world = foot_position.transpose();
+        updateTerrainHeight(state.commanded_contact, feet_world);
+        for (int leg = 0; leg < kNumContacts; ++leg)
+        {
+            state.foot_position.segment<3>(3*leg) = feet_world.col(leg);
         }
 
-        // update the desired values
-    
-        //get the yaw from the quaternion
-        // double yaw = std::atan2(2*(quat.w()*quat.z() + quat.x()*quat.y()),1-2*(quat.y()*quat.y() + quat.z()*quat.z()));
-        // //turn the desired orientation by the yaw
-        // Eigen::Quaterniond yaw_rotation(Eigen::AngleAxisd(yaw, Eigen::Vector3d::UnitZ()));
-        // Eigen::Quaterniond rotated_desired_orientation = yaw_rotation * desired_orientation;
-
-        // std::cout << "yaw: " << yaw << std::endl;
-        // std::cout << "quat: " << quat.x() << " " << quat.y() << " " << quat.z() << " " << quat.w() << std::endl;
-        // std::cout << "desired orientation: " << desired_orientation.x() << " " << desired_orientation.y() << " " << desired_orientation.z() << " " << desired_orientation.w() << std::endl;
-        // std::cout << "rotated desired orientation: " << rotated_desired_orientation.x() << " " << rotated_desired_orientation.y() << " " << rotated_desired_orientation.z() << " " << rotated_desired_orientation.w() << std::endl;
-
-        // Eigen::Vector3d rpy = quatToRPY(quat);
-        double yaw = rpy_init[2];
-        // Eigen::Vector3d desired_rpy = quatToRPY(desired_orientation);
-        // Eigen::Quaterniond rotated_desired_orientation = rpyToquat(Eigen::Vector3d(desired_rpy[0],desired_rpy[1],rpy[2]));
-
-        desired_["quat"][0] = 0;
-        desired_["quat"][1] = 0;
-        desired_["quat"][2] = 0;
-        desired_["quat"][3] = 1;
-
-        desired_["rpy"][0] = 0;
-        desired_["rpy"][1] = 0;
-        desired_["rpy"][2] = 0;
-
-        desired_["dp"][0] = cos(yaw)*desired_linear_speed[0] - sin(yaw)*desired_linear_speed[1];
-        desired_["dp"][1] = cos(yaw)*desired_linear_speed[1] + sin(yaw)*desired_linear_speed[0];
+        desired_["rpy"] = {0, 0, 0};
+        desired_["dp"][0] = desired_linear_speed[0];
+        desired_["dp"][1] = desired_linear_speed[1];
         desired_["dp"][2] = desired_linear_speed[2];
-
-        desired_["omega"][0] = cos(yaw)*desired_angular_speed[0] - sin(yaw)*desired_angular_speed[1];
-        desired_["omega"][1] = cos(yaw)*desired_angular_speed[1] + sin(yaw)*desired_angular_speed[0];
+        desired_["omega"][0] = desired_angular_speed[0];
+        desired_["omega"][1] = desired_angular_speed[1];
         desired_["omega"][2] = desired_angular_speed[2];
 
-        std::map<std::string,std::vector<std::vector<double>>> ref;
-        std::map<std::string,std::vector<std::vector<double>>> param;
-
-        setDesiredAndParameter(contact0,foot,x0_map,ref,param);
-        if(do_sine_wave_)
+        ReferenceTrajectory reference;
+        setDesiredAndParameter(state.commanded_contact, feet_world, state, reference);
+        if (do_sine_wave_)
         {
-            sineWave(ref,param);   
+            sineWave(reference);
         }
-        // solve the ocp
-        ocp_.solve(do_init_,
-               x0_map,
-               ref,
-               param,
-               weight_vec_);
 
-#if 0
-        //FILL the VIS message
-        //ref values
-
-        Eigen::Vector3d _pos{0,0,0};
-        double _radius{0.01};
-        //opti value
-        std::map<std::string,pdata> data;
-        getFullPrediction(data);
-        for(int k{0};k<N_;k++)
-        {   
-            //ref values
-            _pos[0] = ref["p"][k][0];
-            _pos[1] = ref["p"][k][1];
-            _pos[2] = ref["p"][k][2];
-            sphere_pos.push_back(_pos);
-            sphere_color.push_back({1, 0, 0, static_cast<double>((N_ - k)) / static_cast<double>(2*N_)+0.3});
-            sphere_radius.push_back(_radius);
-            for (int leg{0};leg < n_contact_wb_;leg++)
-            {   
-                _pos[0] = ref["foot"][k][3*leg];
-                _pos[1] = ref["foot"][k][3*leg+1];
-                _pos[2] = ref["foot"][k][3*leg+2];
-
-                sphere_pos.push_back(_pos);
-                if(leg == 0)
-                {
-                    sphere_color.push_back({0, 1, 0, static_cast<double>((N_ - k)) / static_cast<double>(2*N_)+0.3});
-                }
-                else if (leg == 1)
-                {
-                    sphere_color.push_back({1, 0, 0, static_cast<double>((N_ - k)) / static_cast<double>(2*N_)+0.3});
-                }
-                else if (leg == 2)
-                {
-                    sphere_color.push_back({1,0,1, static_cast<double>((N_ - k)) / static_cast<double>(2*N_)+0.3});
-                }
-                else if (leg == 3)
-                {
-                    sphere_color.push_back({0,0,1, static_cast<double>((N_ - k)) / static_cast<double>(2*N_)+0.3});
-                }
-                sphere_radius.push_back(_radius);
-            }
-            _pos[0] = data["front"].p[k][0];
-            _pos[1] = data["front"].p[k][1];
-            _pos[2] = data["front"].p[k][2];
-            sphere_pos.push_back(_pos);
-            sphere_color.push_back({0.25, 0.25, 0.25, static_cast<double>((N_ - k)) / static_cast<double>(2*N_)+0.3});
-            sphere_radius.push_back(_radius);
-        
-            _pos[0] = data["back"].p[k][0];
-            _pos[1] = data["back"].p[k][1];
-            _pos[2] = data["back"].p[k][2];
-            sphere_pos.push_back(_pos);
-            sphere_color.push_back({0.25, 0.25, 0.25, static_cast<double>((N_ - k)) / static_cast<double>(2*N_)+0.3});
-            sphere_radius.push_back(_radius);
-    
-        }
-         for(int leg{0};leg<n_contact_wb_;leg++)
-            {
-                _pos[0] = liftoff_pos_[leg][0] + p[0];
-                _pos[1] = liftoff_pos_[leg][1] + p[1];
-                _pos[2] = liftoff_pos_[leg][2] + p[2];
-                sphere_pos.push_back(_pos);
-                sphere_color.push_back({1,0.12,0, 1});
-                sphere_radius.push_back(_radius + 0.005);
-            }
-        
-        Eigen::MatrixXd grf;
-        grf.setZero(3,n_contact_wb_);
-       
-        for (int leg{0};leg < n_contact_wb_;leg++)
-        {   
-            grf.col(leg) << data["wb"].grf[0][3*leg], data["wb"].grf[0][3*leg+1], data["wb"].grf[0][3*leg+2];
-        }
-        for (int leg{0};leg < n_contact_wb_;leg++)
-        {   
-            arrow_pos.push_back(foot.col(leg));
-            arrow_length.push_back(grf.col(leg).norm()/220);
-            if(leg == 0)
-                {
-                    arrow_color.push_back({0, 1, 0, 1});
-                }
-                else if (leg == 1)
-                {
-                    arrow_color.push_back({1, 0, 0, 1});
-                }
-                else if (leg == 2)
-                {
-                    arrow_color.push_back({1, 0, 1, 1});
-                }
-                else if (leg == 3)
-                {
-                    arrow_color.push_back({0, 0, 1, 1});
-                }
-            //set the orrientation of the arrow depending on the grf
-            Eigen::Vector3d _dir = grf.col(leg)/grf.col(leg).norm();
-            double angle = std::acos(_dir[2]);
-            Eigen::Quaterniond _quat(Eigen::AngleAxisd(angle, _dir));
-            arrow_quat.push_back({_quat.x(),_quat.y(),_quat.z(),_quat.w()});
-           
-        }
-#endif
-        // set the timer state coherently with the wall clock
-        timer_.set(t,init);
-        // update desired torque, joint angle and joint velocity
-        ocp_.getControl(des_q,des_dq,des_tau);   
-        // reorder the joint values
-        // reorder_joints(des_q,false);
-        // reorder_joints(des_dq,false);
-        // reorder_joints(des_tau,false);
-
+        const bool solve_success = ocp_.solve(do_init_, state, reference, weights_);
+        timer_.set(timer_phase, timer_initialized);
+        return ocp_.getResult(state.commanded_contact, solve_success);
     }
-    void Dwmpc::upate_terrain_height(const std::vector<double> &contact0, const Eigen::MatrixXd &foot_op)
+
+    void Dwmpc::updateTerrainHeight(const ContactVector &contact0,
+                                    const Eigen::MatrixXd &foot_op)
     {
         for(int leg{0};leg < n_contact_wb_;leg++)
         {
@@ -483,326 +252,201 @@ namespace controllers
     {
         timer_.set(t,init);
     }
-    void Dwmpc::setDesiredAndParameter(const std::vector<double> &contact0,
+    void Dwmpc::setDesiredAndParameter(const ContactVector &contact0,
                                        const Eigen::MatrixXd &foot_op,
-                                       const std::map<std::string,std::vector<double>> &x0_map,
-                                       std::map<std::string,std::vector<std::vector<double>>> &ref,
-                                       std::map<std::string,std::vector<std::vector<double>>> &param)
-    {   
-        //bezier courve for the foot trajectory
-        std::vector<bezier_curves_t> bcs(n_contact_wb_);
-        
-        //initialize the value vector of the data in the reference 
-        std::vector<std::vector<double>> p;
-        std::vector<std::vector<double>> quat;
-        std::vector<std::vector<double>> rpy;
-        std::vector<std::vector<double>> q;
-        std::vector<std::vector<double>> dp;
-        std::vector<std::vector<double>> omega;
-        std::vector<std::vector<double>> dq;
-        std::vector<std::vector<double>> tau;
-        std::vector<std::vector<double>> grf;
-        std::vector<std::vector<double>> foot;
-        std::vector<std::vector<double>> dt_vec;
-
-        std::vector<double> p_k;
-        std::vector<double> tau_k;
-        std::vector<double> grf_k;
-        std::vector<double> foot_k;
+                                       const RobotState &state,
+                                       ReferenceTrajectory &reference)
+    {
+        std::vector<bezier_curves_t> swing_curves(kNumContacts);
         std::vector<bool> early_contact = early_contact_;
-        //number of leg in contact at this step
-        double n_contact{std::accumulate(contact0.begin(),contact0.end(),0.0)};
-        std::vector<bool> fix_swing{};
+        std::vector<bool> fix_swing(kNumContacts);
+        double num_contacts = contact0.sum();
 
-        //initialize the first value of the reference
-        // to the initial condition x,y
-        p_k = x0_map.at("p");
+        const Eigen::Vector3d desired_rpy = Eigen::Map<const Eigen::Vector3d>(desired_.at("rpy").data());
+        const Eigen::Vector3d desired_linear_velocity = Eigen::Map<const Eigen::Vector3d>(desired_.at("dp").data());
+        const Eigen::Vector3d desired_angular_velocity = Eigen::Map<const Eigen::Vector3d>(desired_.at("omega").data());
+        const JointVector home_joint_position = Eigen::Map<const JointVector>(q0_.data());
 
-        //use proprioceptive height
-        p_k[2] = proprioHeight(desired_.at("robot_height")[0]);
-        
-        p.push_back(p_k);
-
-        //set to the desired_ angle
-        quat.push_back(desired_.at("quat"));
-        rpy.push_back(desired_.at("rpy"));
-        // home position quaterion for normalization
-        q.push_back(q0_);
-        //set to the desired_ speed linear and angular
-        dp.push_back(desired_.at("dp"));
-        omega.push_back(desired_.at("omega"));
-        //set to the desired_ joint angle to 0
-        dq.push_back(std::vector<double>(n_joint_wb_,0));
-
-        //set the desired_ foot position to the initial foot position
-        for(int idx{0};idx<n_contact_wb_;idx++)
+        Eigen::Vector3d position = state.position;
+        position[2] = proprioHeight(desired_.at("robot_height")[0]);
+        FootVector feet;
+        for (int leg = 0; leg < kNumContacts; ++leg)
         {
-            foot_k.push_back(foot_op(0,idx)); //foot_op为仿真环境反馈的足端位置
-            foot_k.push_back(foot_op(1,idx));
-            foot_k.push_back(foot_op(2,idx));
-            // foot_k.push_back(foot0_[0+3*idx]);
-            // foot_k.push_back(foot0_[1+3*idx]);
-            // foot_k.push_back(-0.33);
-            fix_swing.push_back(contact0[idx] < 1);
+            feet.segment<3>(3*leg) = foot_op.col(leg);
+            fix_swing[leg] = contact0[leg] < 1;
         }
-        // foot.push_back(foot_k);
 
-        //set the desired_ torque to 0
-
-        for(int idx{0};idx<n_joint_wb_;idx++)
+        JointVector torque = JointVector::Zero();
+        FootVector grf = FootVector::Zero();
+        for (int leg = 0; leg < kNumContacts; ++leg)
         {
-            tau_k.push_back(0);
+            grf[3*leg + 2] = 220/std::max(1.0, num_contacts)*contact0[leg];
         }
-        tau.push_back(std::vector<double>(n_joint_wb_,0));
 
-        //set the desired_ ground reaction force to the grf for gravity compensation
+        reference.position.push_back(position);
+        reference.rpy.push_back(desired_rpy);
+        reference.joint_position.push_back(home_joint_position);
+        reference.linear_velocity.push_back(desired_linear_velocity);
+        reference.angular_velocity.push_back(desired_angular_velocity);
+        reference.joint_velocity.push_back(JointVector::Zero());
+        reference.torque.push_back(torque);
+        reference.ground_reaction_force.push_back(grf);
+        reference.contact_schedule.push_back(contact0);
 
-        for(int idx{0};idx<n_contact_wb_;idx++)
+        std::vector<double> leg_phase;
+        std::vector<bool> timer_initialized;
+        timer_.get(leg_phase, timer_initialized);
+        for (int leg = 0; leg < kNumContacts; ++leg)
         {
-            grf_k.push_back(0);
-            grf_k.push_back(0);
-            grf_k.push_back(220/std::max(1.0,n_contact)*contact0[idx]); //TODO change this to a more general model 220 is the weight of aliengo
-        }
-        grf.push_back(grf_k);
-
-        //contact sequence
-        std::vector<std::vector<double>> contact_seq;
-        //current contact state
-        std::vector<double> contact;
-        //set the initial contact state
-        for(int idx{0};idx<n_contact_wb_;idx++)
-        {
-            contact.push_back(contact0[idx]);
-        }
-        contact_seq.push_back(contact);
-
-        std::vector<double> dt{0.01}; //integrazion time step
-        std::vector<double> t_leg;
-        std::vector<bool> val;
-        timer_.get(t_leg,val);
-        for(int idx{0};idx<n_contact_wb_;idx++)
-        {
-            if(contact0[idx] > 0 && early_contact_[idx])
+            if (contact0[leg] > 0 && early_contact_[leg])
             {
-                early_contact[idx] = false;
-                early_contact_[idx] = false;
+                early_contact[leg] = false;
+                early_contact_[leg] = false;
             }
-            if(early_contact_[idx])
+            if (!early_contact_[leg]
+                && contact0[leg] < 1
+                && state.measured_contact[leg] > 0
+                && std::min((leg_phase[leg]-timer_.duty_factor)/(1-timer_.duty_factor), 1.0) > 0.6)
             {
-                continue;
-            }
-            if(contact0[idx] < 1 && x0_map.at("contact")[idx]>0 && std::min((t_leg[idx]-timer_.duty_factor)/(1-timer_.duty_factor),1.0) > 0.6)
-            {   
-                // std::cout << "leg " << idx << " time "<< std::min((t_leg[idx]-timer_.duty_factor)/(1-timer_.duty_factor),1.0) << std::endl;
-                early_contact[idx] = true;
-                early_contact_[idx] = true;
+                early_contact[leg] = true;
+                early_contact_[leg] = true;
             }
         }
-        for(int k {0}; k<N_+1; k++)
-        {   
-            //set dt
-            dt[0] = dt_;
 
-            dt_vec.push_back(dt);
-            // update the contact state base on the timer
-            contact = timer_.run(dt[0]); // at time k+1
-            //append the contact state to the contact sequence
-            contact_seq.push_back(contact);
+        for (int k = 0; k < N_+1; ++k)
+        {
+            const std::vector<double> next_contact_vector = timer_.run(dt_);
+            const ContactVector next_contact = Eigen::Map<const ContactVector>(next_contact_vector.data());
+            reference.contact_schedule.push_back(next_contact);
+            num_contacts = next_contact.sum();
 
-            //number of leg in contact at this step
-            n_contact = 0;
-            for (int i = 0; i < contact.size(); i++) {
-                n_contact += contact[i]; 
-            }         
-
-            //integrate using the desired_ speed 
-            // p
-            p_k[0] = ((p[k][0] + desired_.at("dp")[0]*dt[0]));
-            p_k[1] = ((p[k][1] + desired_.at("dp")[1]*dt[0]));
-            p_k[2] = ((p[k][2] + desired_.at("dp")[2]*dt[0]));
-            p.push_back(p_k);
-
-            // quat
-            quat.push_back(desired_.at("quat"));
-            rpy.push_back(desired_.at("rpy"));
-            // q
-            q.push_back(q0_);
-            // dp
-            dp.push_back(desired_.at("dp"));
-            // omega
-            omega.push_back(desired_.at("omega"));
-            // dq
-            dq.push_back(std::vector<double>(n_joint_wb_,0));
+            position += desired_linear_velocity*dt_;
+            reference.position.push_back(position);
+            reference.rpy.push_back(desired_rpy);
+            reference.joint_position.push_back(home_joint_position);
+            reference.linear_velocity.push_back(desired_linear_velocity);
+            reference.angular_velocity.push_back(desired_angular_velocity);
+            reference.joint_velocity.push_back(JointVector::Zero());
 
             if (k < N_)
-            // foot
             {
-                for (int leg{0};leg < n_contact_wb_;leg++)
-                {    
-                    
-                    // if((contact_seq[k+1][leg] == 0 && contact_seq[k][leg])>0 || (contact_seq[k][leg] == 0  &&  k == 0)) // lift off or already on swing
-                    if((contact_seq[k+1][leg] == 0 && contact_seq[k][leg])) // lift off or already on swing
-                    {   
-                        if (k == 0) //save the lift-off position for the next swing leg
+                for (int leg = 0; leg < kNumContacts; ++leg)
+                {
+                    if (reference.contact_schedule[k+1][leg] == 0
+                        && reference.contact_schedule[k][leg] != 0)
+                    {
+                        if (k == 0)
                         {
-                            liftoff_pos_[leg][0] = foot_k[3*leg] - p_k[0];
-                            liftoff_pos_[leg][1] = foot_k[3*leg + 1] - p_k[1];
-                            liftoff_pos_[leg][2] = foot_k[3*leg + 2] - p_k[2];
+                            liftoff_pos_[leg] = feet.segment<3>(3*leg) - position;
                         }
-                        //get the yaw from the quaternion
-                        // double yaw = std::atan2(2*(desired_.at("quat")[3]*desired_.at("quat")[2] + desired_.at("quat")[0]*desired_.at("quat")[1]), 1 - 2*(desired_.at("quat")[1]*desired_.at("quat")[1] + desired_.at("quat")[2]*desired_.at("quat")[2]));
-                        double yaw = std::atan2(2*(x0_map.at("quat")[3]*x0_map.at("quat")[2] + x0_map.at("quat")[0]*x0_map.at("quat")[1]), 1 - 2*(x0_map.at("quat")[1]*x0_map.at("quat")[1] + x0_map.at("quat")[2]*x0_map.at("quat")[2]));
-                        std::vector<double> foothold{cos(yaw)*foot0_[3*leg]-sin(yaw)*foot0_[3*leg+1],cos(yaw)*foot0_[3*leg+1] + sin(yaw)*foot0_[3*leg],terrain_height_[leg]-p_k[2]};
-                        
-                        // foothold[0] += p_k[0];
-                        // foothold[1] += p_k[1];
 
-                        foothold[0] += 0.5*(desired_.at("dp")[0]); //+ desired_.at("omega")[2]*(cos(yaw)*foot0_[3*leg+1] + sin(yaw)*foot0_[3*leg]))*timer_.duty_factor*timer_.step_freq;
-                        foothold[1] += 0.5*(desired_.at("dp")[1]); //+ desired_.at("omega")[2]*(cos(yaw)*foot0_[3*leg]-sin(yaw)*foot0_[3*leg+1]))*timer_.duty_factor*timer_.step_freq;
+                        const double yaw = state.rpy[2];
+                        Eigen::Vector3d foothold(
+                            std::cos(yaw)*foot0_[3*leg] - std::sin(yaw)*foot0_[3*leg+1],
+                            std::cos(yaw)*foot0_[3*leg+1] + std::sin(yaw)*foot0_[3*leg],
+                            terrain_height_[leg] - position[2]);
+                        foothold[0] += 0.5*desired_linear_velocity[0];
+                        foothold[1] += 0.5*desired_linear_velocity[1];
+                        foothold[0] += std::sqrt(desired_.at("robot_height")[0]/9.81)
+                                     *(state.linear_velocity[0] - desired_linear_velocity[0]);
+                        foothold[1] += std::sqrt(desired_.at("robot_height")[0]/9.81)
+                                     *(state.linear_velocity[1] - desired_linear_velocity[1]);
 
-                        //correction with actual speed 
-                        // foothold[0] += std::sqrt(desired_.at("robot_height")[0]/9.81)*( x0_map.at("dp")[0]*cos(yaw) + x0_map.at("dp")[1]*sin(yaw) - desired_.at("dp")[0]);
-                        // foothold[1] += std::sqrt(desired_.at("robot_height")[0]/9.81)*( x0_map.at("dp")[1]*cos(yaw) - x0_map.at("dp")[0]*sin(yaw) - desired_.at("dp")[1]);
-                        foothold[0] += std::sqrt(desired_.at("robot_height")[0]/9.81)*( x0_map.at("dp")[0] - desired_.at("dp")[0]); // 这里应该不需要坐标转换
-                        foothold[1] += std::sqrt(desired_.at("robot_height")[0]/9.81)*( x0_map.at("dp")[1] - desired_.at("dp")[1]);
-                        
-                        std::vector<Eigen::Vector3d> cp{};
+                        constexpr double scaling_factor = 0.7105;
+                        constexpr double delta_x = 0.10;
+                        const double step_height = desired_.at("step_height")[0];
+                        const Eigen::Vector3d relative_foot = feet.segment<3>(3*leg) - position;
+                        std::vector<Eigen::Vector3d> control_points{
+                            relative_foot,
+                            relative_foot + Eigen::Vector3d(-delta_x/scaling_factor, 0, step_height/scaling_factor),
+                            (relative_foot + foothold)/2 + Eigen::Vector3d(-delta_x/(2*scaling_factor), 0, step_height/scaling_factor),
+                            foothold + Eigen::Vector3d(0, 0, step_height/scaling_factor),
+                            foothold};
                         bezier_curves_t::curve_constraints_t constraints;
-                        double scaling_factor{0.7105};
-                        double delta_x{0.10};
-                        // if((t_leg[leg]-timer_.duty_factor)/(1-timer_.duty_factor)<0.5) // maka a bezier curve to the foothold with an apex in the mindle
-                        // {     
-                            cp.push_back(Eigen::Vector3d(foot_k[3*leg]-p_k[0],foot_k[1+3*leg]-p_k[1],foot_k[2+3*leg]-p_k[2]));
-                            cp.push_back(Eigen::Vector3d(foot_k[3*leg]-p_k[0]-delta_x/scaling_factor,foot_k[1+3*leg]-p_k[1],foot_k[2+3*leg]-p_k[2]+desired_.at("step_height")[0]/scaling_factor));
-                            cp.push_back(Eigen::Vector3d((foot_k[3*leg]+foothold[0]-p_k[0]-delta_x/scaling_factor)/2,(foot_k[1+3*leg]-p_k[1]+foothold[1])/2,(foot_k[2+3*leg]+foothold[2]-p_k[2])/2+desired_.at("step_height")[0]/scaling_factor));
-                            cp.push_back(Eigen::Vector3d(foothold[0],foothold[1],foothold[2] + desired_.at("step_height")[0]/scaling_factor));
-                            cp.push_back(Eigen::Vector3d(foothold[0],foothold[1],foothold[2]));
-                            constraints.end_vel = Eigen::Vector3d(0,0,0);
-                        // }
-                        // else //if we passed the midle time of the step make a bezier curve that goes to the end
-                        // {   
-                        //     cp.push_back(Eigen::Vector3d(foot_k[3*leg],foot_k[1+3*leg],foot_k[2+3*leg]));
-                        //     cp.push_back(Eigen::Vector3d(foothold[0],foothold[1],foot_k[2+3*leg]));
-                        //     cp.push_back(Eigen::Vector3d(foothold[0],foothold[1],foothold[2]));
-                        //     constraints.end_vel = Eigen::Vector3d(0,0,0);
-                        // }
-                        bezier_curves_t bc(cp.begin(), cp.end(),constraints,(t_leg[leg]-timer_.duty_factor)/(1-timer_.duty_factor),1);
-                        bcs[leg] = bc;
-                        if(k <= 1)
+                        constraints.end_vel = Eigen::Vector3d::Zero();
+                        bezier_curves_t curve(control_points.begin(), control_points.end(), constraints,
+                                              (leg_phase[leg]-timer_.duty_factor)/(1-timer_.duty_factor), 1);
+                        swing_curves[leg] = curve;
+                        if (k <= 1)
                         {
-                            bcs_[leg] = bc;
+                            bcs_[leg] = curve;
                         }
-
                     }
-                    if (contact_seq[k][leg]==0) // if the leg is in swing
-                    {   
-                        double _t = t_leg[leg]; 
-                        if (_t < timer_.duty_factor)
+
+                    if (reference.contact_schedule[k][leg] == 0)
+                    {
+                        double phase = leg_phase[leg];
+                        if (phase < timer_.duty_factor)
                         {
-                            _t = 0.99;
+                            phase = 0.99;
                         }
-                        if(fix_swing[leg])
-                        {    
-                            if(early_contact[leg])
+                        const double swing_phase = std::min(
+                            (phase-timer_.duty_factor)/(1-timer_.duty_factor), 1.0);
+                        if (fix_swing[leg])
+                        {
+                            if (early_contact[leg])
                             {
                                 continue;
                             }
-                            double yaw = std::atan2(2*(x0_map.at("quat")[3]*x0_map.at("quat")[2] + x0_map.at("quat")[0]*x0_map.at("quat")[1]), 1 - 2*(x0_map.at("quat")[1]*x0_map.at("quat")[1] + x0_map.at("quat")[2]*x0_map.at("quat")[2]));
-                            std::vector<double> foothold{cos(yaw)*foot0_[3*leg]-sin(yaw)*foot0_[3*leg+1],cos(yaw)*foot0_[3*leg+1] + sin(yaw)*foot0_[3*leg],terrain_height_[leg]-p_k[2]};
-                        
-                            // foothold[0] += p_k[0];
-                            // foothold[1] += p_k[1];
+                            const double yaw = state.rpy[2];
+                            Eigen::Vector3d foothold(
+                                std::cos(yaw)*foot0_[3*leg] - std::sin(yaw)*foot0_[3*leg+1],
+                                std::cos(yaw)*foot0_[3*leg+1] + std::sin(yaw)*foot0_[3*leg],
+                                terrain_height_[leg] - position[2]);
+                            foothold[0] += 0.5*desired_linear_velocity[0];
+                            foothold[1] += 0.5*desired_linear_velocity[1];
+                            foothold[0] += std::sqrt(desired_.at("robot_height")[0]/9.81)
+                                         *(state.linear_velocity[0] - desired_linear_velocity[0]);
+                            foothold[1] += std::sqrt(desired_.at("robot_height")[0]/9.81)
+                                         *(state.linear_velocity[1] - desired_linear_velocity[1]);
 
-                            foothold[0] += 0.5*(desired_.at("dp")[0]); //+ desired_.at("omega")[2]*(cos(yaw)*foot0_[3*leg+1] + sin(yaw)*foot0_[3*leg]))*timer_.duty_factor*timer_.step_freq;
-                            foothold[1] += 0.5*(desired_.at("dp")[1]); //+ desired_.at("omega")[2]*(cos(yaw)*foot0_[3*leg]-sin(yaw)*foot0_[3*leg+1]))*timer_.duty_factor*timer_.step_freq;
-
-                            //correction with actual speed 
-                            // foothold[0] += std::sqrt(desired_.at("robot_height")[0]/9.81)*( x0_map.at("dp")[0]*cos(yaw) + x0_map.at("dp")[1]*sin(yaw) - desired_.at("dp")[0]);
-                            // foothold[1] += std::sqrt(desired_.at("robot_height")[0]/9.81)*( x0_map.at("dp")[1]*cos(yaw) - x0_map.at("dp")[0]*sin(yaw) - desired_.at("dp")[1]);
-                            foothold[0] += std::sqrt(desired_.at("robot_height")[0]/9.81)*( x0_map.at("dp")[0] - desired_.at("dp")[0]); // 同上，这里应该不需要坐标转换
-                            foothold[1] += std::sqrt(desired_.at("robot_height")[0]/9.81)*( x0_map.at("dp")[1] - desired_.at("dp")[1]);
-                            std::vector<Eigen::Vector3d> cp{};
-
+                            constexpr double scaling_factor = 0.7105;
+                            constexpr double delta_x = 0.10;
+                            const double step_height = desired_.at("step_height")[0];
+                            std::vector<Eigen::Vector3d> control_points{
+                                liftoff_pos_[leg],
+                                liftoff_pos_[leg] + Eigen::Vector3d(-delta_x/scaling_factor, 0, step_height/scaling_factor),
+                                (liftoff_pos_[leg] + foothold)/2 + Eigen::Vector3d(-delta_x/(2*scaling_factor), 0, step_height/scaling_factor),
+                                foothold + Eigen::Vector3d(0, 0, step_height/scaling_factor),
+                                foothold};
                             bezier_curves_t::curve_constraints_t constraints;
-                            double scaling_factor{0.7105};
-                            double delta_x{0.10};
-                            cp.push_back(liftoff_pos_[leg]);
-                            cp.push_back(Eigen::Vector3d(liftoff_pos_[leg][0]-delta_x/scaling_factor,liftoff_pos_[leg][1],liftoff_pos_[leg][2]+desired_.at("step_height")[0]/scaling_factor));
-                            cp.push_back(Eigen::Vector3d((liftoff_pos_[leg][0]+foothold[0]-delta_x/scaling_factor)/2,(liftoff_pos_[leg][1]+foothold[1])/2,(liftoff_pos_[leg][2]+foothold[2])/2+desired_.at("step_height")[0]/scaling_factor));
-                            cp.push_back(Eigen::Vector3d(foothold[0],foothold[1],foothold[2] + desired_.at("step_height")[0]/scaling_factor));
-                            cp.push_back(Eigen::Vector3d(foothold[0],foothold[1],foothold[2]));
-                            constraints.end_vel = Eigen::Vector3d(0,0,0);
-                            bezier_curves_t bc(cp.begin(), cp.end(),constraints,0,1);
-
-                            Eigen::Vector3d foot_position{bc(std::min((_t-timer_.duty_factor)/(1-timer_.duty_factor),1.0))};
-                            foot_k[3*leg] = foot_position[0] + p_k[0]; // 世界坐标系下的足端位置
-                            foot_k[3*leg + 1] = foot_position[1] + p_k[1];
-                            foot_k[3*leg + 2] =  foot_position[2] + p_k[2];
-
+                            constraints.end_vel = Eigen::Vector3d::Zero();
+                            bezier_curves_t curve(control_points.begin(), control_points.end(), constraints, 0, 1);
+                            feet.segment<3>(3*leg) = curve(swing_phase) + position;
                         }
                         else
                         {
-                            Eigen::Vector3d foot_position{bcs[leg](std::min((_t-timer_.duty_factor)/(1-timer_.duty_factor),1.0))};
-                            foot_k[3*leg] = foot_position[0]+ p_k[0];
-                            foot_k[3*leg + 1] = foot_position[1] + p_k[1];
-                            foot_k[3*leg + 2] =  foot_position[2] + p_k[2];
+                            feet.segment<3>(3*leg) = swing_curves[leg](swing_phase) + position;
                         }
-
                     }
                     else
                     {
-                        // foot_k[3*leg + 2] = terrain_height_[leg];
                         early_contact[leg] = false;
-                        if(fix_swing[leg])
-                        {
-                            fix_swing[leg] = false;
-                        }
+                        fix_swing[leg] = false;
                     }
                 }
-                foot.push_back(foot_k);
-                // tau
-                tau.push_back(std::vector<double>(n_joint_wb_,0)); //ref tau给的0
-                // grf
-                for(int leg{0};leg<n_contact_wb_;leg++)
-                {
-                    grf_k[3*leg] = 0;
-                    grf_k[3*leg+1] = 0;
-                    grf_k[3*leg+2] = 220/std::max(1.0,n_contact)*contact[leg]; //TODO change this to a more general model 220 is the weight of aliengo //ref grf只给了z轴的重力
-                }
-                grf.push_back(grf_k);
-            }
-            else
-            {
-                // push back the last foot ref 
-                foot.push_back(foot_k);
-            }
-            timer_.get(t_leg,val);
-        }
 
-        // set the reference map
-        ref["p"] = p;
-        ref["quat"] = quat;
-        ref["rpy"] = rpy;
-        ref["q"] = q;
-        ref["dp"] = dp;
-        ref["omega"] = omega;
-        ref["dq"] = dq;
-        ref["tau"] = tau; //ref tau给的0
-        ref["grf"] = grf; //ref grf只给了z轴的重力
-        ref["foot"] = foot;
-        // set the parameter map
-        param["contact_seq"] = contact_seq;
-        param["foot"] = foot;
-        param["dt"] = dt_vec;
+                reference.torque.push_back(torque);
+                for (int leg = 0; leg < kNumContacts; ++leg)
+                {
+                    grf.segment<3>(3*leg).setZero();
+                    grf[3*leg+2] = 220/std::max(1.0, num_contacts)*next_contact[leg];
+                }
+                reference.ground_reaction_force.push_back(grf);
+            }
+            reference.foot_position.push_back(feet);
+            timer_.get(leg_phase, timer_initialized);
+        }
     }
-    void Dwmpc::sineWave(std::map<std::string,std::vector<std::vector<double>>> &ref, std::map<std::string,std::vector<std::vector<double>>> &param)
+
+    void Dwmpc::sineWave(ReferenceTrajectory &reference)
     {
         double time{time_};
         for(int k{0};k<N_+1;k++)
         {    
-            time += param["dt"][k][0];
-            ref["p"][k][2] = ref["p"][k][2] + amplitude_*sin(time * 2*M_PI*frequency_);
-            ref["dp"][k][2] = 2*M_PI*frequency_ * amplitude_*cos(time * 2*M_PI*frequency_);
+            time += dt_;
+            reference.position[k][2] += amplitude_*sin(time * 2*M_PI*frequency_);
+            reference.linear_velocity[k][2] = 2*M_PI*frequency_ * amplitude_*cos(time * 2*M_PI*frequency_);
         }
     }
     void Dwmpc::setSineParam(double frequency, double amplitude)
@@ -875,31 +519,9 @@ namespace controllers
         timer_.setDelta(delta);
         timer_.setParam(duty_factor,step_freq);
     }
-    void Dwmpc::getFullPrediction(std::map<std::string,pdata> &prediction)
+    const std::map<std::string,pdata> &Dwmpc::getFullPrediction() const
     {
-        ocp_.getData(prediction);   
-        //reorder q and dq
-        // for(int k{0};k<N_+1;k++)
-        // {
-        //     reorder_joints(prediction["wb"].q[k],false);
-        //     reorder_joints(prediction["wb"].dq[k],false);
-        // }      
-    }
-    void Dwmpc::prepare()
-    {
-        ocp_.prepare();
-    }
-    void Dwmpc::goHandStand()
-    {
-        go_biped_ = true;
-    }
-    void Dwmpc::stopHandStand()
-    {   
-        //to do --- THIS NEED THE SAME TREATMENT AS THE GO HAND STAND 
-        timer_.stopTimer();
-        go_biped_ = false;
-        bipedal_walk_ = false;
-        stand_up_timer_ = 0.0;
+        return ocp_.getData();
     }
     void Dwmpc::setStepHeight(double step_height)
     {

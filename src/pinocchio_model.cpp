@@ -1,5 +1,13 @@
 #include "controllers/dwmpc/pinocchio_model.hpp"
 
+Eigen::Vector3d worldOmegaToYprRate(const Eigen::Vector3d &rpy,
+                                    const Eigen::Vector3d &omega_world)
+{
+    const Eigen::Vector3d rpy_rate =
+        pinocchio::rpy::computeRpyJacobianInverse(rpy, pinocchio::WORLD)*omega_world;
+    return Eigen::Vector3d(rpy_rate[2], rpy_rate[1], rpy_rate[0]);
+}
+
 quadrupedModel::quadrupedModel() {}
 
 quadrupedModel::~quadrupedModel() {}
@@ -64,6 +72,7 @@ void quadrupedModel::modelInit(parameter const &config_param) {
         } 
         Ak_[subsystems_name] = Eigen::MatrixXd::Zero(config_param_.n_state, config_param_.n_state);
         Bk_[subsystems_name] = Eigen::MatrixXd::Zero(config_param_.n_state, config_param_.n_control);
+        bk_[subsystems_name] = Eigen::VectorXd::Zero(config_param_.n_state);
     }
 
     std::cout << "quadrupedModel initialized!!!" << std::endl;
@@ -71,24 +80,19 @@ void quadrupedModel::modelInit(parameter const &config_param) {
     return;
 }      
 
-void quadrupedModel::modelUpdate(std::map<std::string,std::vector<double>> const &x0_map) {        
+void quadrupedModel::modelUpdate(const RobotState &state) {
     
     Eigen::VectorXd q(18);
     Eigen::VectorXd v(18);
 
-    q.segment(0, 3) = Eigen::Map<const Eigen::VectorXd>(x0_map.at("p").data(), x0_map.at("p").size());
-    // q.segment(3, 4) = Eigen::Map<const Eigen::VectorXd>(x0_map.at("quat").data(), x0_map.at("quat").size());
-    q(3) = x0_map.at("rpy")[2];
-    q(4) = x0_map.at("rpy")[1];
-    q(5) = x0_map.at("rpy")[0];
-    v.segment(0, 3) = Eigen::Map<const Eigen::VectorXd>(x0_map.at("dp").data(), x0_map.at("dp").size());
-    // v.segment(3, 3) = Eigen::Map<const Eigen::VectorXd>(x0_map.at("omega").data(), x0_map.at("omega").size());    
-    v(3) = x0_map.at("omega")[2];
-    v(4) = x0_map.at("omega")[1];
-    v(5) = x0_map.at("omega")[0];
+    q.segment<3>(0) = state.position;
+    const Eigen::Vector3d &rpy = state.rpy;
+    q.segment<3>(3) = rpy.reverse();
+    v.segment<3>(0) = state.linear_velocity;
+    v.segment<3>(3) = worldOmegaToYprRate(rpy, state.angular_velocity);
     for (auto i{0};i < config_param_.n_joint_wb;i++) {
-        q(6+i) = x0_map.at("q")[i];
-        v(6+i) = x0_map.at("dq")[i];
+        q(6+i) = state.joint_position[i];
+        v(6+i) = state.joint_velocity[i];
     }
 
     // 计算所有动力学项
@@ -109,13 +113,6 @@ void quadrupedModel::modelUpdate(std::map<std::string,std::vector<double>> const
     // 从计算结果中提取惯性矩阵、科里奥利力矩阵和重力向量
     Eigen::MatrixXd const &M_wb = pin_data_.M;     // 惯性矩阵
     Eigen::VectorXd const &nle_wb = pin_data_.nle; //包含科里奥利力和重力项
-
-    //计算角速度旋转矩阵
-    // Eigen::Quaterniond quat(x0_map["quat"][3], x0_map["quat"][0], x0_map["quat"][1], x0_map["quat"][2]);
-    // Eigen::Vector3d rpy = quatToRPY(quat);
-    // Eigen::MatrixXd inv_jac_R = pinocchio::computeRpyJacobianInverse(rpy);
-    // Eigen::MatrixXd inv_jac_R = pinocchio::computeRpyJacobianInverse(x0_map["rpy"]);
-    Eigen::MatrixXd inv_jac_R = Eigen::MatrixXd::Identity(3, 3);
 
     //计算雅可比矩阵，用于计算外部力矩和填充模型参数
     for (size_t i = 0; i < config_param_.n_contact_wb; ++i) {
@@ -150,15 +147,15 @@ void quadrupedModel::modelUpdate(std::map<std::string,std::vector<double>> const
         if (subsystems_name == "wb") {
             continue;
         } 
-        updateSubsystem(subsystems_name, M_wb, nle_wb, inv_jac_R, x0_map);
+        updateSubsystem(subsystems_name, M_wb, nle_wb, state);
     }
  
     return;
 }
 
 void quadrupedModel::updateSubsystem(std::string const &subsystems_name, Eigen::MatrixXd const &M_wb, 
-                                     Eigen::VectorXd const &nle_wb, Eigen::MatrixXd const &inv_jac_R,
-                                     std::map<std::string,std::vector<double>> const &x0_map) {
+                                     Eigen::VectorXd const &nle_wb,
+                                     const RobotState &state) {
     int s_idx = 0;
     if (subsystems_name == "front") {
         s_idx = 0;
@@ -185,26 +182,27 @@ void quadrupedModel::updateSubsystem(std::string const &subsystems_name, Eigen::
 
     // 计算矩阵 S (12x18)
     Eigen::MatrixXd S;
-    createSelectMatrix(subsystems_name, x0_map, S);
+    createSelectMatrix(subsystems_name, state, S);
 
     //计算矩阵参数
-    Eigen::MatrixXd inv_M = M.inverse();
-    Eigen::VectorXd delta = inv_M*(-nle);
+    const Eigen::LDLT<Eigen::MatrixXd> mass_solver(M);
+    const Eigen::VectorXd delta = mass_solver.solve(-nle);
 
     //连续模型
     Eigen::MatrixXd A = Eigen::MatrixXd::Zero(config_param_.n_state, config_param_.n_state);
     Eigen::MatrixXd B = Eigen::MatrixXd::Zero(config_param_.n_state, config_param_.n_control);
+    Eigen::VectorXd affine = Eigen::VectorXd::Zero(config_param_.n_state);
 
     A.block(0, 12, 3, 3)   = Eigen::MatrixXd::Identity(3, 3);
-    A.block(3, 15, 3, 3)   = inv_jac_R;
+    A.block(3, 15, 3, 3)   = Eigen::MatrixXd::Identity(3, 3);
     A.block(6, 18, 6, 6)   = Eigen::MatrixXd::Identity(6, 6);
-    A.block(12, 30, 12, 1) = delta;
+    affine.segment(12, 12) = delta;
 
     // case 1.1: 使用LOCAL_WORLD_ALIGNED，子系统雅可比
     A.block(24, 12, 3, 12) = J_linear_sub_[s_idx];
     A.block(27, 12, 3, 12) = J_linear_sub_[s_idx+1];
 
-    Eigen::MatrixXd B_temp = inv_M*S; //12*18
+    const Eigen::MatrixXd B_temp = mass_solver.solve(S); //12*18
     B.block(12, 0, 12, 18) = B_temp;
 
     // 离散化
@@ -217,6 +215,7 @@ void quadrupedModel::updateSubsystem(std::string const &subsystems_name, Eigen::
     Eigen::MatrixXd Matrix_temp = (Eigen::MatrixXd::Identity(config_param_.n_state, config_param_.n_state)-A*dt).inverse();
     Ak_[subsystems_name] = Matrix_temp;
     Bk_[subsystems_name] = Matrix_temp*B*dt;
+    bk_[subsystems_name] = Matrix_temp*affine*dt;
 
     return;
 }
@@ -234,7 +233,7 @@ std::vector<Eigen::VectorXd> quadrupedModel::updatePrediction(Eigen::VectorXd co
 
     // xtraj.push_back(x0);                                 
     for(int i=0; i<config_param_.N_; ++i) {
-        xk = Ak_[subsystems_name]*xk + Bk_[subsystems_name]*u[i];
+        xk = Ak_[subsystems_name]*xk + Bk_[subsystems_name]*u[i] + bk_[subsystems_name];
         xk(3) = normalizeAngle(xk(3));
         xk(4) = normalizeAngle(xk(4));
         xk(5) = normalizeAngle(xk(5));
@@ -245,7 +244,7 @@ std::vector<Eigen::VectorXd> quadrupedModel::updatePrediction(Eigen::VectorXd co
 }
 
 
-void quadrupedModel::createSelectMatrix(std::string const &subsystems_name, std::map<std::string, std::vector<double>> const &x0_map,
+void quadrupedModel::createSelectMatrix(std::string const &subsystems_name, const RobotState &state,
                                         Eigen::MatrixXd &S) {
     
     int s_idx = 0;
@@ -264,7 +263,7 @@ void quadrupedModel::createSelectMatrix(std::string const &subsystems_name, std:
     
     // 设置 S 中与 tau 对应的部分 (后6行，前6列)
     S.block(n_joint, 0, n_joint, n_joint) = Eigen::MatrixXd::Identity(n_joint, n_joint);
-    std::vector<double> contact_cmd = x0_map.at("contact_cmd");
+    const ContactVector &contact_cmd = state.commanded_contact;
     if (s_idx == 0) {
         for (int idx = 0; idx < 2; ++idx) { 
             Eigen::MatrixXd J_T = J_linear_sub_[idx].transpose();
@@ -308,55 +307,3 @@ double normalizeAngle(double angle) {
     
     return angle;
 }
-
-#ifdef DEBUG_MODE
-// 打印std::vector<double>
-void debug_print(const std::vector<double>& vec) {
-    std::cout << "[";
-    for (size_t i = 0; i < vec.size(); ++i) {
-        std::cout << vec[i];
-        if (i != vec.size() - 1) {
-            std::cout << ", ";
-        }
-    }
-    std::cout << "]" << std::endl;
-}
-
-// 打印std::vector<std::vector<double>>
-void debug_print(const std::vector<std::vector<double>>& mat) {
-    std::cout << "[" << std::endl;
-    for (size_t i = 0; i < mat.size(); ++i) {
-        std::cout << "  ";
-        debug_print(mat[i]);  // 调用vector<double>的print函数
-    }
-    std::cout << "]" << std::endl;
-}
-
-// 打印Eigen::VectorXd
-void debug_print(const Eigen::VectorXd& vec) {
-    std::cout << "[";
-    for (int i = 0; i < vec.size(); ++i) {
-        std::cout << vec[i];
-        if (i != vec.size() - 1) {
-            std::cout << ", ";
-        }
-    }
-    std::cout << "]" << std::endl;
-}
-
-// 打印Eigen::MatrixXd
-void debug_print(const Eigen::MatrixXd& mat) {
-    std::cout << "[" << std::endl;
-    for (int i = 0; i < mat.rows(); ++i) {
-        std::cout << "  [";
-        for (int j = 0; j < mat.cols(); ++j) {
-            std::cout << mat(i, j);
-            if (j != mat.cols() - 1) {
-                std::cout << ", ";
-            }
-        }
-        std::cout << "]" << std::endl;
-    }
-    std::cout << "]" << std::endl;
-}
-#endif

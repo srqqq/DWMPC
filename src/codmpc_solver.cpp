@@ -1,14 +1,39 @@
 #include "controllers/dwmpc/codmpc_solver.hpp"
+#include <future>
+#include <numeric>
+
+namespace
+{
+template <typename Derived>
+std::vector<double> toStdVector(const Eigen::MatrixBase<Derived> &value)
+{
+    return std::vector<double>(value.derived().data(), value.derived().data() + value.size());
+}
+
+hpipm::OcpQpIpmSolverSettings solverSettings()
+{
+    hpipm::OcpQpIpmSolverSettings settings;
+    settings.mode = hpipm::HpipmMode::SpeedAbs;
+    settings.iter_max = 100;
+    settings.alpha_min = 1e-8;
+    settings.mu0 = 1e2;
+    settings.tol_stat = 1e-04;
+    settings.tol_eq = 1e-04;
+    settings.tol_ineq = 1e-04;
+    settings.tol_comp = 1e-04;
+    settings.reg_prim = 1e-12;
+    settings.warm_start = 0;
+    settings.pred_corr = 1;
+    settings.ric_alg = 1;
+    settings.split_step = 1;
+    return settings;
+}
+}
 
 codmpcSolver::codmpcSolver()
 {}
 
-codmpcSolver::~codmpcSolver() {
-#ifdef USE_FPGA
-    // 销毁
-    protocol_->ProtocolDestory();
-#endif  
-}
+codmpcSolver::~codmpcSolver() = default;
 
 void codmpcSolver::init(const parameter &config_param)
 {
@@ -34,79 +59,133 @@ void codmpcSolver::init(const parameter &config_param)
         }
     }
     
-    Q_ = Eigen::DiagonalMatrix<double, Eigen::Dynamic>(Eigen::VectorXd::Zero(config_param_.n_state));
-    Q_consensus_ = Eigen::DiagonalMatrix<double, Eigen::Dynamic>(Eigen::VectorXd::Zero(config_param_.n_state));
-    R_ = Eigen::DiagonalMatrix<double, Eigen::Dynamic>(Eigen::VectorXd::Zero(config_param_.n_control));
+    for (std::size_t i = 0; i < 2; ++i)
+    {
+        Q_[i] = Eigen::DiagonalMatrix<double, Eigen::Dynamic>(Eigen::VectorXd::Zero(config_param_.n_state));
+        Q_consensus_[i] = Eigen::DiagonalMatrix<double, Eigen::Dynamic>(Eigen::VectorXd::Zero(config_param_.n_state));
+        R_[i] = Eigen::DiagonalMatrix<double, Eigen::Dynamic>(Eigen::VectorXd::Zero(config_param_.n_control));
+        qp_[i].resize(config_param_.N_ + 1);
+        solution_[i].resize(config_param_.N_ + 1);
+        for (int k = 0; k <= config_param_.N_; ++k)
+        {
+            auto &stage = qp_[i][k];
+            stage.Q = Eigen::MatrixXd::Zero(config_param_.n_state, config_param_.n_state);
+            stage.q = Eigen::VectorXd::Zero(config_param_.n_state);
+            const int num_general_constraints = k == 0 ? 20 : (k == config_param_.N_ ? 6 : 26);
+            stage.C = Eigen::MatrixXd::Zero(num_general_constraints, config_param_.n_state);
+            stage.D = Eigen::MatrixXd::Zero(num_general_constraints, config_param_.n_control);
+            stage.lg = Eigen::VectorXd::Zero(num_general_constraints);
+            stage.ug = Eigen::VectorXd::Zero(num_general_constraints);
+            if (k < config_param_.N_)
+            {
+                stage.A = Eigen::MatrixXd::Zero(config_param_.n_state, config_param_.n_state);
+                stage.B = Eigen::MatrixXd::Zero(config_param_.n_state, config_param_.n_control);
+                stage.b = Eigen::VectorXd::Zero(config_param_.n_state);
+                stage.R = Eigen::MatrixXd::Zero(config_param_.n_control, config_param_.n_control);
+                stage.S = Eigen::MatrixXd::Zero(config_param_.n_control, config_param_.n_state);
+                stage.r = Eigen::VectorXd::Zero(config_param_.n_control);
+                stage.idxbu.resize(config_param_.n_joint);
+                std::iota(stage.idxbu.begin(), stage.idxbu.end(), 0);
+                stage.lbu = Eigen::VectorXd::Zero(config_param_.n_joint);
+                stage.ubu = Eigen::VectorXd::Zero(config_param_.n_joint);
+            }
+        }
+        hpipm_solver_[i].setSolverSettings(solverSettings());
+        hpipm_solver_[i].resize(qp_[i]);
+    }
 
     quadruped_model_.modelInit(config_param);
-
-#ifdef USE_FPGA
-    protocolInit();
-#endif
-
-// #ifdef DEBUG_MODE
-//     data_logger_.init("quadruped_data.csv");
-// #endif
 
     std::cout << "codmpcSolver initialized!!!" << std::endl;
 
     return;
 }
 
-void codmpcSolver::solve( bool &do_init,
-                    const std::map<std::string,std::vector<double>> &x0_map,
-                    const std::map<std::string,std::vector<std::vector<double>>> &ref,
-                    const std::map<std::string,std::vector<std::vector<double>>> &param,
-                    const std::map<std::string,std::vector<double>> &weight_vec) 
+bool codmpcSolver::solve(bool &do_init,
+                         const RobotState &state,
+                         const ReferenceTrajectory &reference,
+                         const MpcWeights &weights)
 {   
+    auto data_candidate = data_;
+
     // init data to the reference 
     if (do_init)
     {    
         for(auto problem : config_param_.subsystems_name) //对所有subsystem初始化
         {   
+            pdata initialized_data{};
             // init to refernce
-            data_[problem].p = ref.at("p");
-            data_[problem].quat = ref.at("quat");
-            data_[problem].rpy = ref.at("rpy");
-            data_[problem].dp = ref.at("dp");
-            data_[problem].omega = ref.at("omega");
             for (int k{0};k<config_param_.N_+1;k++)
             {   
                 std::vector<double> q,dq,tau,grf,foot;
+                initialized_data.p.push_back(toStdVector(reference.position[k]));
+                initialized_data.rpy.push_back(toStdVector(reference.rpy[k]));
+                const Eigen::Quaterniond quat = rpyToquat(reference.rpy[k]);
+                initialized_data.quat.push_back({quat.x(), quat.y(), quat.z(), quat.w()});
+                initialized_data.dp.push_back(toStdVector(reference.linear_velocity[k]));
+                const Eigen::Vector3d &ref_rpy = reference.rpy[k];
+                const Eigen::Vector3d &ref_omega = reference.angular_velocity[k];
+                const Eigen::Vector3d ref_ypr_rate = worldOmegaToYprRate(ref_rpy, ref_omega);
+                initialized_data.omega.push_back(
+                    {ref_ypr_rate[2], ref_ypr_rate[1], ref_ypr_rate[0]});
                 for (auto idx : config_param_.subsystems_map_joint[problem])
                 {
-                    q.push_back(ref.at("q")[k][idx]);
-                    dq.push_back(ref.at("dq")[k][idx]);
-                    tau.push_back(ref.at("tau")[k][idx]);
+                    q.push_back(reference.joint_position[k][idx]);
+                    dq.push_back(reference.joint_velocity[k][idx]);
+                    tau.push_back(reference.torque[k][idx]);
                 }
                 for (auto idx : config_param_.subsystems_map_contact[problem])
                 {
-                    grf.push_back(ref.at("grf")[k][3*idx]);
-                    grf.push_back(ref.at("grf")[k][3*idx+1]);
-                    grf.push_back(ref.at("grf")[k][3*idx+2]);
+                    grf.push_back(reference.ground_reaction_force[k][3*idx]);
+                    grf.push_back(reference.ground_reaction_force[k][3*idx+1]);
+                    grf.push_back(reference.ground_reaction_force[k][3*idx+2]);
 
-                    foot.push_back(ref.at("foot")[k][3*idx]);
-                    foot.push_back(ref.at("foot")[k][3*idx+1]);
-                    foot.push_back(ref.at("foot")[k][3*idx+2]);
+                    foot.push_back(reference.foot_position[k][3*idx]);
+                    foot.push_back(reference.foot_position[k][3*idx+1]);
+                    foot.push_back(reference.foot_position[k][3*idx+2]);
                 }
-                data_[problem].tau.push_back(tau);
-                data_[problem].grf.push_back(grf);
-                data_[problem].foot.push_back(foot);
-                data_[problem].q.push_back(q);
-                data_[problem].dq.push_back(dq);
-                data_[problem].dual.push_back(std::vector<double>(6,0));
-                data_[problem].residual.push_back(std::vector<double>(6,0));
+                if (k < config_param_.N_)
+                {
+                    initialized_data.tau.push_back(tau);
+                    initialized_data.grf.push_back(grf);
+                }
+                initialized_data.foot.push_back(foot);
+                initialized_data.q.push_back(q);
+                initialized_data.dq.push_back(dq);
+                initialized_data.dual.push_back(std::vector<double>(6,0));
+                initialized_data.residual.push_back(std::vector<double>(6,0));
             }
+            data_candidate[problem] = std::move(initialized_data);
         }
     }
+
+    const double rho = weights.consensus;
+    if (rho <= 0.0)
+    {
+        throw std::invalid_argument("consensus weight must be positive");
+    }
+
+    // Retain the ADMM state at the same relative horizon node across control
+    // cycles. HPIPM itself remains cold-started.
+    auto consensus_dp = data_candidate.at("wb").dp;
+    auto consensus_omega = data_candidate.at("wb").omega;
+    std::map<std::string, std::vector<std::vector<double>>> dual_for_iteration;
+    for (const auto &problem : config_param_.subsystems_name)
+    {
+        if (problem != "wb")
+        {
+            dual_for_iteration[problem] = data_candidate.at(problem).dual;
+        }
+    }
+
+    auto x_candidate = x_;
+    auto u_candidate = u_;
+    bool all_solved = true;
 
     // main loop  (number of iteration)
     //problem loop
     // ============       MODEL       ============
-    tm_.start("modelUpdate");
-    quadruped_model_.modelUpdate(x0_map); // 放在循环外面
-    tm_.stop("modelUpdate");
-    tm_.print("modelUpdate");
+    quadruped_model_.modelUpdate(state);
 
     for (auto problem : config_param_.subsystems_name)
     {   
@@ -114,52 +193,55 @@ void codmpcSolver::solve( bool &do_init,
         if (problem == "wb")
             continue;
 
+        const std::size_t solver_index = problem == "front" ? 0 : 1;
+        auto &Q = Q_[solver_index];
+        auto &Q_consensus = Q_consensus_[solver_index];
+        auto &R = R_[solver_index];
+
         int counter = 0;
 
         // ============ INITAIAL CONDITION ============ 
-        x0_[problem](0) = x0_map.at("p")[0];
-        x0_[problem](1) = x0_map.at("p")[1];
-        x0_[problem](2) = x0_map.at("p")[2];
+        x0_[problem](0) = state.position[0];
+        x0_[problem](1) = state.position[1];
+        x0_[problem](2) = state.position[2];
 
-        x0_[problem](3) = normalizeAngle(x0_map.at("rpy")[2]);
-        x0_[problem](4) = normalizeAngle(x0_map.at("rpy")[1]);
-        x0_[problem](5) = normalizeAngle(x0_map.at("rpy")[0]);
-        // problem_initial_condition.push_back(normalizeAngle(x0_map.at("rpy")[0] - ref.at("rpy")[0][0])); // 姿态欧拉角ref设置为0，由于欧拉角有过圈问题，在这里先算好误差
-        // problem_initial_condition.push_back(normalizeAngle(x0_map.at("rpy")[1] - ref.at("rpy")[0][1]));
-        // problem_initial_condition.push_back(normalizeAngle(x0_map.at("rpy")[2] - ref.at("rpy")[0][2]));
+        x0_[problem](3) = normalizeAngle(state.rpy[2]);
+        x0_[problem](4) = normalizeAngle(state.rpy[1]);
+        x0_[problem](5) = normalizeAngle(state.rpy[0]);
+        // problem_initial_condition.push_back(normalizeAngle(state.rpy[0] - reference.rpy[0][0])); // 姿态欧拉角ref设置为0，由于欧拉角有过圈问题，在这里先算好误差
+        // problem_initial_condition.push_back(normalizeAngle(state.rpy[1] - reference.rpy[0][1]));
+        // problem_initial_condition.push_back(normalizeAngle(state.rpy[2] - reference.rpy[0][2]));
 
         counter = 0;
         for(auto idx : config_param_.subsystems_map_joint[problem]) //循环6次
         {
-            x0_[problem](6+counter) = x0_map.at("q")[idx];
+            x0_[problem](6+counter) = state.joint_position[idx];
             ++counter;
         }
 
-        x0_[problem](12) = x0_map.at("dp")[0];
-        x0_[problem](13) = x0_map.at("dp")[1];
-        x0_[problem](14) = x0_map.at("dp")[2];
+        x0_[problem](12) = state.linear_velocity[0];
+        x0_[problem](13) = state.linear_velocity[1];
+        x0_[problem](14) = state.linear_velocity[2];
 
-        x0_[problem](15) = x0_map.at("omega")[2];
-        x0_[problem](16) = x0_map.at("omega")[1];
-        x0_[problem](17) = x0_map.at("omega")[0];
+        const Eigen::Vector3d rpy = Eigen::Map<const Eigen::Vector3d>(state.rpy.data());
+        const Eigen::Vector3d omega = Eigen::Map<const Eigen::Vector3d>(state.angular_velocity.data());
+        x0_[problem].segment<3>(15) = worldOmegaToYprRate(rpy, omega);
 
         counter=0;
         for(auto idx : config_param_.subsystems_map_joint[problem]) //循环6次
         {
-            x0_[problem](18+counter) = x0_map.at("dq")[idx];
+            x0_[problem](18+counter) = state.joint_velocity[idx];
             ++counter;
         }
         
         counter=0;
         for (auto idx : config_param_.subsystems_map_contact[problem]) //循环3*2次
         {
-            x0_[problem](24+counter) = x0_map.at("foot")[3*idx];
-            x0_[problem](25+counter) = x0_map.at("foot")[3*idx+1];
-            x0_[problem](26+counter) = x0_map.at("foot")[3*idx+2];
+            x0_[problem](24+counter) = state.foot_position[3*idx];
+            x0_[problem](25+counter) = state.foot_position[3*idx+1];
+            x0_[problem](26+counter) = state.foot_position[3*idx+2];
             counter+=3;
         }
-
-        x0_[problem](30) = 1.0;
 
         //std::cout << std::endl;
 
@@ -168,13 +250,13 @@ void codmpcSolver::solve( bool &do_init,
         for (auto k{0};k<config_param_.N_+1; k++)
         {   
             //set p,quat 
-            x_ref_[problem][k](0) = ref.at("p")[k][0];
-            x_ref_[problem][k](1) = ref.at("p")[k][1];
-            x_ref_[problem][k](2) = ref.at("p")[k][2];
+            x_ref_[problem][k](0) = reference.position[k][0];
+            x_ref_[problem][k](1) = reference.position[k][1];
+            x_ref_[problem][k](2) = reference.position[k][2];
 
-            x_ref_[problem][k](3) = ref.at("rpy")[k][2];
-            x_ref_[problem][k](4) = ref.at("rpy")[k][1];
-            x_ref_[problem][k](5) = ref.at("rpy")[k][0];
+            x_ref_[problem][k](3) = reference.rpy[k][2];
+            x_ref_[problem][k](4) = reference.rpy[k][1];
+            x_ref_[problem][k](5) = reference.rpy[k][0];
             // ref_k.push_back(0); // 姿态欧拉角ref设置为0，由于欧拉角有过圈问题，在这里先算好误差
             // ref_k.push_back(0);
             // ref_k.push_back(0);
@@ -183,44 +265,42 @@ void codmpcSolver::solve( bool &do_init,
             counter=0;
             for(auto idx : config_param_.subsystems_map_joint[problem]) //循环6次
             {
-                x_ref_[problem][k](6+counter) = ref.at("q")[k][idx];
+                x_ref_[problem][k](6+counter) = reference.joint_position[k][idx];
                 ++counter;
             }
 
             // set dp omega
-            x_ref_[problem][k](12) = ref.at("dp")[k][0];
-            x_ref_[problem][k](13) = ref.at("dp")[k][1];
-            x_ref_[problem][k](14) = ref.at("dp")[k][2];
+            x_ref_[problem][k](12) = reference.linear_velocity[k][0];
+            x_ref_[problem][k](13) = reference.linear_velocity[k][1];
+            x_ref_[problem][k](14) = reference.linear_velocity[k][2];
 
-            x_ref_[problem][k](15) = ref.at("omega")[k][2];
-            x_ref_[problem][k](16) = ref.at("omega")[k][1];
-            x_ref_[problem][k](17) = ref.at("omega")[k][0];
+            const Eigen::Vector3d ref_rpy = Eigen::Map<const Eigen::Vector3d>(reference.rpy[k].data());
+            const Eigen::Vector3d ref_omega = Eigen::Map<const Eigen::Vector3d>(reference.angular_velocity[k].data());
+            x_ref_[problem][k].segment<3>(15) = worldOmegaToYprRate(ref_rpy, ref_omega);
 
-            consensus_ref_[problem][k](12) = data_["wb"].dp[k][0] - data_[problem].dual[k][0]; // ADMM的consensus
-            consensus_ref_[problem][k](13) = data_["wb"].dp[k][0] - data_[problem].dual[k][0];
-            consensus_ref_[problem][k](14) = data_["wb"].dp[k][0] - data_[problem].dual[k][0];
-            consensus_ref_[problem][k](15) = data_["wb"].omega[k][2] - data_[problem].dual[k][5];
-            consensus_ref_[problem][k](16) = data_["wb"].omega[k][1] - data_[problem].dual[k][4];
-            consensus_ref_[problem][k](17) = data_["wb"].omega[k][0] - data_[problem].dual[k][3];
+            consensus_ref_[problem][k](12) = consensus_dp[k][0] - dual_for_iteration[problem][k][0]/rho;
+            consensus_ref_[problem][k](13) = consensus_dp[k][1] - dual_for_iteration[problem][k][1]/rho;
+            consensus_ref_[problem][k](14) = consensus_dp[k][2] - dual_for_iteration[problem][k][2]/rho;
+            consensus_ref_[problem][k](15) = consensus_omega[k][2] - dual_for_iteration[problem][k][5]/rho;
+            consensus_ref_[problem][k](16) = consensus_omega[k][1] - dual_for_iteration[problem][k][4]/rho;
+            consensus_ref_[problem][k](17) = consensus_omega[k][0] - dual_for_iteration[problem][k][3]/rho;
 
             // set dq
             counter=0;
             for(auto idx : config_param_.subsystems_map_joint[problem]) //循环6次
             {
-                x_ref_[problem][k](18+counter) = ref.at("dq")[k][idx];
+                x_ref_[problem][k](18+counter) = reference.joint_velocity[k][idx];
                 ++counter;
             }
             // set foot
             counter=0;
             for (auto idx : config_param_.subsystems_map_contact[problem]) //循环2*3次
             {
-                x_ref_[problem][k](24+counter) = ref.at("foot")[k][3*idx];
-                x_ref_[problem][k](25+counter) = ref.at("foot")[k][3*idx+1];
-                x_ref_[problem][k](26+counter) = ref.at("foot")[k][3*idx+2];
+                x_ref_[problem][k](24+counter) = reference.foot_position[k][3*idx];
+                x_ref_[problem][k](25+counter) = reference.foot_position[k][3*idx+1];
+                x_ref_[problem][k](26+counter) = reference.foot_position[k][3*idx+2];
                 counter+=3;
             }
-
-            x_ref_[problem][k](30) = 1.0;
 
             ////  ============ REFERENCE  U ============
             if (k < config_param_.N_) { // u N维
@@ -228,7 +308,7 @@ void codmpcSolver::solve( bool &do_init,
                 counter=0;
                 for(auto idx : config_param_.subsystems_map_joint[problem]) // 循环6次
                 {
-                    u_ref_[problem][k](counter) = ref.at("tau")[k][idx];
+                    u_ref_[problem][k](counter) = reference.torque[k][idx];
                     ++counter;
                 }
 
@@ -236,9 +316,9 @@ void codmpcSolver::solve( bool &do_init,
                 counter=0;
                 for(auto idx : config_param_.subsystems_map_contact[problem]) // 循环3*2=6次
                 {
-                    u_ref_[problem][k](6+counter) = ref.at("grf")[k][3*idx];
-                    u_ref_[problem][k](7+counter) = ref.at("grf")[k][3*idx+1];
-                    u_ref_[problem][k](8+counter) = ref.at("grf")[k][3*idx+2];
+                    u_ref_[problem][k](6+counter) = reference.ground_reaction_force[k][3*idx];
+                    u_ref_[problem][k](7+counter) = reference.ground_reaction_force[k][3*idx+1];
+                    u_ref_[problem][k](8+counter) = reference.ground_reaction_force[k][3*idx+2];
                     counter+=3;              
                 }
 
@@ -247,17 +327,17 @@ void codmpcSolver::solve( bool &do_init,
                 if (problem == "front") {
                     for(auto idx : config_param_.subsystems_map_contact["back"]) // 循环3*2=6次
                     {
-                        u_ref_[problem][k](12+counter) = ref.at("grf")[k][3*idx];
-                        u_ref_[problem][k](13+counter) = ref.at("grf")[k][3*idx+1];
-                        u_ref_[problem][k](14+counter) = ref.at("grf")[k][3*idx+2];
+                        u_ref_[problem][k](12+counter) = reference.ground_reaction_force[k][3*idx];
+                        u_ref_[problem][k](13+counter) = reference.ground_reaction_force[k][3*idx+1];
+                        u_ref_[problem][k](14+counter) = reference.ground_reaction_force[k][3*idx+2];
                         counter+=3;              
                     }
                 } else {
                     for(auto idx : config_param_.subsystems_map_contact["front"]) // 循环3*2=6次
                     {
-                        u_ref_[problem][k](12+counter) = ref.at("grf")[k][3*idx];
-                        u_ref_[problem][k](13+counter) = ref.at("grf")[k][3*idx+1];
-                        u_ref_[problem][k](14+counter) = ref.at("grf")[k][3*idx+2];
+                        u_ref_[problem][k](12+counter) = reference.ground_reaction_force[k][3*idx];
+                        u_ref_[problem][k](13+counter) = reference.ground_reaction_force[k][3*idx+1];
+                        u_ref_[problem][k](14+counter) = reference.ground_reaction_force[k][3*idx+2];
                         counter+=3;              
                     }
                 }
@@ -265,48 +345,49 @@ void codmpcSolver::solve( bool &do_init,
         }
 
         ////  ============ WEIGHT  ============                
-        if(do_init) //本来是每个预测step都有一个权重，这里就不改了
+        // Contact-dependent weights are refreshed once per control cycle and
+        // then kept constant over this QP's prediction horizon.
         {
             // weight p 
-            Q_.diagonal()[0] = weight_vec.at("p")[0];
-            Q_.diagonal()[1] = weight_vec.at("p")[1];
-            Q_.diagonal()[2] = weight_vec.at("p")[2];
+            Q.diagonal()[0] = weights.position[0];
+            Q.diagonal()[1] = weights.position[1];
+            Q.diagonal()[2] = weights.position[2];
 
             // weight quat
-            Q_.diagonal()[3] = weight_vec.at("quat")[2];
-            Q_.diagonal()[4] = weight_vec.at("quat")[1];
-            Q_.diagonal()[5] = weight_vec.at("quat")[0];
+            Q.diagonal()[3] = weights.orientation[2];
+            Q.diagonal()[4] = weights.orientation[1];
+            Q.diagonal()[5] = weights.orientation[0];
 
             // weight q
             counter = 0;
             for(auto idx : config_param_.subsystems_map_joint[problem]) // 实际循环6次
             {
-                Q_.diagonal()[6+counter] = weight_vec.at("q")[0];
+                Q.diagonal()[6+counter] = weights.joint_position;
                 counter++;
             }
         
             // weight dp
-            Q_.diagonal()[12] = weight_vec.at("dp")[0];
-            Q_.diagonal()[13] = weight_vec.at("dp")[1];
-            Q_.diagonal()[14] = weight_vec.at("dp")[2];
+            Q.diagonal()[12] = weights.linear_velocity[0];
+            Q.diagonal()[13] = weights.linear_velocity[1];
+            Q.diagonal()[14] = weights.linear_velocity[2];
 
             // weight omega
-            Q_.diagonal()[15] = weight_vec.at("omega")[2];
-            Q_.diagonal()[16] = weight_vec.at("omega")[1];
-            Q_.diagonal()[17] = weight_vec.at("omega")[0];
+            Q.diagonal()[15] = weights.angular_velocity[2];
+            Q.diagonal()[16] = weights.angular_velocity[1];
+            Q.diagonal()[17] = weights.angular_velocity[0];
 
-            Q_consensus_.diagonal()[12] = weight_vec.at("consensus")[0]; // ADMM的consensus
-            Q_consensus_.diagonal()[13] = weight_vec.at("consensus")[0];
-            Q_consensus_.diagonal()[14] = weight_vec.at("consensus")[0];
-            Q_consensus_.diagonal()[15] = weight_vec.at("consensus")[0];
-            Q_consensus_.diagonal()[16] = weight_vec.at("consensus")[0];
-            Q_consensus_.diagonal()[17] = weight_vec.at("consensus")[0];
+            Q_consensus.diagonal()[12] = weights.consensus;
+            Q_consensus.diagonal()[13] = weights.consensus;
+            Q_consensus.diagonal()[14] = weights.consensus;
+            Q_consensus.diagonal()[15] = weights.consensus;
+            Q_consensus.diagonal()[16] = weights.consensus;
+            Q_consensus.diagonal()[17] = weights.consensus;
 
             // weight dq
             counter = 0;
             for(auto idx : config_param_.subsystems_map_joint[problem]) // 实际循环6次
             {
-                Q_.diagonal()[18+counter] = weight_vec.at("dq")[0];
+                Q.diagonal()[18+counter] = weights.joint_velocity;
                 counter++;
             }
 
@@ -314,29 +395,26 @@ void codmpcSolver::solve( bool &do_init,
             counter = 0;
             for(auto idx : config_param_.subsystems_map_contact[problem]) // 实际循环2*3次
             {   
-                if (x0_map.at("contact_cmd")[idx] == 1)
+                if (state.commanded_contact[idx] == 1)
                 {
-                    Q_.diagonal()[24 + counter] = weight_vec.at("foot_stance")[0];
-                    Q_.diagonal()[25 + counter] = weight_vec.at("foot_stance")[1];
-                    Q_.diagonal()[26 + counter] = weight_vec.at("foot_stance")[2];
+                    Q.diagonal()[24 + counter] = weights.foot_stance[0];
+                    Q.diagonal()[25 + counter] = weights.foot_stance[1];
+                    Q.diagonal()[26 + counter] = weights.foot_stance[2];
                 }
                 else
                 {
-                    Q_.diagonal()[24 + counter] = weight_vec.at("foot_swing")[0]; //分配摆动腿或站立腿权重
-                    Q_.diagonal()[25 + counter] = weight_vec.at("foot_swing")[1];
-                    Q_.diagonal()[26 + counter] = weight_vec.at("foot_swing")[2];
+                    Q.diagonal()[24 + counter] = weights.foot_swing[0];
+                    Q.diagonal()[25 + counter] = weights.foot_swing[1];
+                    Q.diagonal()[26 + counter] = weights.foot_swing[2];
                 }
                 counter+=3;
             }
-
-            // weight constant 1
-            Q_.diagonal()[30] = 0;
 
             // weight tau
             counter = 0;
             for(auto idx : config_param_.subsystems_map_joint[problem]) // 实际循环6次
             {
-                R_.diagonal()[counter] = weight_vec.at("tau")[0];
+                R.diagonal()[counter] = weights.torque;
                 counter++;
             }
 
@@ -344,45 +422,48 @@ void codmpcSolver::solve( bool &do_init,
             counter = 0;
             for(auto idx : config_param_.subsystems_map_contact["wb"])
             {
-                R_.diagonal()[6+counter] = weight_vec.at("grf")[0];
-                R_.diagonal()[7+counter] = weight_vec.at("grf")[0];                            
-                R_.diagonal()[8+counter] = weight_vec.at("grf")[0];
+                R.diagonal()[6+counter] = weights.ground_reaction_force;
+                R.diagonal()[7+counter] = weights.ground_reaction_force;
+                R.diagonal()[8+counter] = weights.ground_reaction_force;
                 counter+=3;
             }
 
             // gamma
-            gamma_ = weight_vec.at("gamma")[0];
+            gamma_[solver_index] = weights.gamma;
         }              
+    }
 
-#ifdef USE_FPGA
-        dataSend(x0_map, problem);
-#endif
+    auto &front_x = x_candidate.at("front");
+    auto &front_u = u_candidate.at("front");
+    auto &back_x = x_candidate.at("back");
+    auto &back_u = u_candidate.at("back");
+    auto front = std::async(std::launch::async, [&] {
+        return hpipmSolve(state, "front", 0, front_x, front_u);
+    });
+    auto back = std::async(std::launch::async, [&] {
+        return hpipmSolve(state, "back", 1, back_x, back_u);
+    });
+    const bool front_solved = front.get();
+    const bool back_solved = back.get();
+    all_solved = front_solved && back_solved;
 
-#ifdef USE_QPOASES 
-        bool success = qpOASESsolve(x0, x0_map, x_ref_, u_ref, problem);
-        if (!success) {
-            std::cout << "MPC求解失败！" << std::endl;
+    if (!all_solved)
+    {
+        return false;
+    }
+
+    x_ = std::move(x_candidate);
+    u_ = std::move(u_candidate);
+
+    data_ = std::move(data_candidate);
+
+    for (const auto &problem : config_param_.subsystems_name)
+    {
+        if (problem != "wb")
+        {
+            data_[problem].dual = std::move(dual_for_iteration[problem]);
         }
-#endif  
-
-
-#ifdef USE_HPIPM
-        bool success = hpipmSolve(x0_map, problem);
-        if (!success) {
-            std::cout << "MPC求解失败！" << std::endl;
-        }
-#endif  
-
     }
-
-#ifdef USE_FPGA
-    if (!is_front_solved) {
-        std::cout << "子问题front未求解成功！！！" << std::endl;
-    }
-    if (!is_back_solved) {
-        std::cout << "子问题back未求解成功！！！" << std::endl;
-    }
-#endif
 
     for (auto problem : config_param_.subsystems_name)
     {   
@@ -390,11 +471,7 @@ void codmpcSolver::solve( bool &do_init,
             continue;
         // update state from solution
 
-#ifdef USE_HPIPM
         std::vector<Eigen::VectorXd> &x = x_[problem];
-#else
-        std::vector<Eigen::VectorXd> x = quadruped_model_.updatePrediction(x0_[problem], u_[problem], problem);
-#endif
         
         int n_joints {static_cast<int>(config_param_.subsystems_map_joint[problem].size())}; //6
         int counter = 0;
@@ -495,13 +572,13 @@ void codmpcSolver::solve( bool &do_init,
         {
             if (problem == "wb")
                 continue;
-            data_["wb"].dp[k][0] += (data_[problem].dp[k][0] + data_[problem].dual[k][0]/weight_vec.at("consensus")[0])/n;
-            data_["wb"].dp[k][1] += (data_[problem].dp[k][1] + data_[problem].dual[k][1]/weight_vec.at("consensus")[0])/n;
-            data_["wb"].dp[k][2] += (data_[problem].dp[k][2] + data_[problem].dual[k][2]/weight_vec.at("consensus")[0])/n;
+            data_["wb"].dp[k][0] += (data_[problem].dp[k][0] + data_[problem].dual[k][0]/rho)/n;
+            data_["wb"].dp[k][1] += (data_[problem].dp[k][1] + data_[problem].dual[k][1]/rho)/n;
+            data_["wb"].dp[k][2] += (data_[problem].dp[k][2] + data_[problem].dual[k][2]/rho)/n;
 
-            data_["wb"].omega[k][0] += (data_[problem].omega[k][0] + data_[problem].dual[k][3]/weight_vec.at("consensus")[0])/n;
-            data_["wb"].omega[k][1] += (data_[problem].omega[k][1] + data_[problem].dual[k][4]/weight_vec.at("consensus")[0])/n;
-            data_["wb"].omega[k][2] += (data_[problem].omega[k][2] + data_[problem].dual[k][5]/weight_vec.at("consensus")[0])/n;
+            data_["wb"].omega[k][0] += (data_[problem].omega[k][0] + data_[problem].dual[k][3]/rho)/n;
+            data_["wb"].omega[k][1] += (data_[problem].omega[k][1] + data_[problem].dual[k][4]/rho)/n;
+            data_["wb"].omega[k][2] += (data_[problem].omega[k][2] + data_[problem].dual[k][5]/rho)/n;
         }
     }
     // update dual
@@ -511,14 +588,14 @@ void codmpcSolver::solve( bool &do_init,
         {
             continue;
         }
-        for (int k{0};k<config_param_.N_;k++)
+        for (int k{0};k<config_param_.N_+1;k++)
         {
-            data_[problem].dual[k][0] += (data_[problem].dp[k][0] - data_["wb"].dp[k][0])*weight_vec.at("consensus")[0];
-            data_[problem].dual[k][1] += (data_[problem].dp[k][1] - data_["wb"].dp[k][1])*weight_vec.at("consensus")[0];
-            data_[problem].dual[k][2] += (data_[problem].dp[k][2] - data_["wb"].dp[k][2])*weight_vec.at("consensus")[0];
-            data_[problem].dual[k][3] += (data_[problem].omega[k][0] - data_["wb"].omega[k][0])*weight_vec.at("consensus")[0];
-            data_[problem].dual[k][4] += (data_[problem].omega[k][1] - data_["wb"].omega[k][1])*weight_vec.at("consensus")[0];
-            data_[problem].dual[k][5] += (data_[problem].omega[k][2] - data_["wb"].omega[k][2])*weight_vec.at("consensus")[0];
+            data_[problem].dual[k][0] += rho*(data_[problem].dp[k][0] - data_["wb"].dp[k][0]);
+            data_[problem].dual[k][1] += rho*(data_[problem].dp[k][1] - data_["wb"].dp[k][1]);
+            data_[problem].dual[k][2] += rho*(data_[problem].dp[k][2] - data_["wb"].dp[k][2]);
+            data_[problem].dual[k][3] += rho*(data_[problem].omega[k][0] - data_["wb"].omega[k][0]);
+            data_[problem].dual[k][4] += rho*(data_[problem].omega[k][1] - data_["wb"].omega[k][1]);
+            data_[problem].dual[k][5] += rho*(data_[problem].omega[k][2] - data_["wb"].omega[k][2]);
 
             data_[problem].residual[k][0] = (data_[problem].dp[k][0] - data_["wb"].dp[k][0]);
             data_[problem].residual[k][1] = (data_[problem].dp[k][1] - data_["wb"].dp[k][1]);
@@ -529,247 +606,51 @@ void codmpcSolver::solve( bool &do_init,
         }
         // for (int k{0};k<config_param_.N_;k++)
         // {
-        //     data_[problem].dual[k][0] = (data_["front"].dp[k][0] - (data_["back"].dp[k][0]))*weight_vec.at("consensus")[0];
-        //     data_[problem].dual[k][1] = (data_["front"].dp[k][1] - (data_["back"].dp[k][1]))*weight_vec.at("consensus")[0];
-        //     data_[problem].dual[k][2] = (data_["front"].dp[k][2] - (data_["back"].dp[k][2]))*weight_vec.at("consensus")[0];
-        //     data_[problem].dual[k][3] = (data_["front"].omega[k][0] - (data_["back"].omega[k][0]))*weight_vec.at("consensus")[0];
-        //     data_[problem].dual[k][4] = (data_["front"].omega[k][1] - (data_["back"].omega[k][1]))*weight_vec.at("consensus")[0];
-        //     data_[problem].dual[k][5] = (data_["front"].omega[k][2] - (data_["back"].omega[k][2]))*weight_vec.at("consensus")[0];
+        //     data_[problem].dual[k][0] = (data_["front"].dp[k][0] - (data_["back"].dp[k][0]))*weights.consensus;
+        //     data_[problem].dual[k][1] = (data_["front"].dp[k][1] - (data_["back"].dp[k][1]))*weights.consensus;
+        //     data_[problem].dual[k][2] = (data_["front"].dp[k][2] - (data_["back"].dp[k][2]))*weights.consensus;
+        //     data_[problem].dual[k][3] = (data_["front"].omega[k][0] - (data_["back"].omega[k][0]))*weights.consensus;
+        //     data_[problem].dual[k][4] = (data_["front"].omega[k][1] - (data_["back"].omega[k][1]))*weights.consensus;
+        //     data_[problem].dual[k][5] = (data_["front"].omega[k][2] - (data_["back"].omega[k][2]))*weights.consensus;
         // }
     }
     // check stopping criteria
 
     do_init = false;
-}
-
-void codmpcSolver::prepare()
-{
-    // TODO
-    return;
-}
-void codmpcSolver::getControl(std::vector<double> &des_q,std::vector<double> &des_dq,std::vector<double> &des_tau)
-{   
-    des_q = data_["wb"].q[1];
-    des_dq = data_["wb"].dq[1];
-    des_tau = data_["wb"].tau[0];
-
-}
-void codmpcSolver::getData(std::map<std::string,pdata> &data)
-{  
-    data = data_;
-}
-
-#ifdef USE_FPGA
-// 将字节数组转换为 std::string，发送数据时使用
-std::string codmpcSolver::ByteArrayToString(const std::vector<uint8_t>& byteArray) {
-    return std::string(reinterpret_cast<const char*>(byteArray.data()), byteArray.size());
-}
-
-// 将 std::string 转换为字节数组，接收数据时使用
-std::vector<uint8_t> codmpcSolver::StringToByteArray(const std::string& str) {
-    std::vector<uint8_t> byteArray(str.begin(), str.end());
-    return byteArray;
-}
-
-void codmpcSolver::dataRecvCallback(const std::string& data) {
-
-    std::vector<uint8_t> recv_buffer = StringToByteArray(data);
-
-    // 长度校验
-    int const total_byte_length = 2564;// (20*10+40*11)*4+4=2564
-    if (recv_buffer.size() != total_byte_length) {
-        std::cout << "接收数据长度错误！！！期望 "<< total_byte_length << " byte, 收到 " <<recv_buffer.size()<<" byte！！！"<< std::endl;
-    }
-
-    // 定义帧头帧尾
-    std::array<uint8_t, 2> const FRAME_HEADER = {0xAA, 0xBB};
-    std::array<uint8_t, 2> const FRAME_FOOTER = {0xCC, 0xDD};
-
-    // 帧头校验
-    if (*recv_buffer.begin() != FRAME_HEADER[0] || *(recv_buffer.begin()+1) != FRAME_HEADER[1]) {
-        std::cout << "接收数据帧头错误！！！" << std::endl;
-        return;
-    }
-
-    // 帧尾校验
-    if (*(recv_buffer.end()-2) != FRAME_FOOTER[0] || *(recv_buffer.end()-1) != FRAME_FOOTER[1]) {
-        std::cout << "接收数据帧尾错误！！！" << std::endl;
-        return;
-    }
-
-    // 检查字节数是否为4的倍数（每个float占4字节）
-    if ((recv_buffer.size()-4) % 4 != 0) {
-        std::cerr << "警告：接收的字节数不是4的倍数，可能存在数据不完整！" << std::endl;
-    }
-
-    // 计算可转换的float数量
-    size_t float_count = (recv_buffer.size()-4) / 4;
-    Eigen::VectorXf result(float_count);
-
-    // 遍历字节流，每4字节转换为一个float（跳过帧头帧尾）
-    for (size_t i = 2; i < float_count; ++i) {
-        // 获取当前组的起始地址（第i个float的第1个字节）
-        uint8_t* byte_ptr = &recv_buffer[i * 4];
-        // 将uint8_t*转换为float*，解引用得到float值
-        float* float_ptr = reinterpret_cast<float*>(byte_ptr);
-        result << *float_ptr;
-    }
-
-    // 接收数据
-    int const &N = config_param_.N_;
-    int const &nx = config_param_.n_state;
-    int const &nu = config_param_.n_control;
-    int const nx_send = 40;
-    int const nu_send = 20;
-    int const start_idx_x = nu_send*N;
-
-    std::string subsystems_name;
-    if(!is_front_solved) {
-        subsystems_name = "front";
-        is_front_solved = true;
-    } else if (!is_back_solved) {
-        subsystems_name = "back";
-        is_back_solved = true;
-    } else {
-        std::cout << "错误！！！接收数据时is_front_solved和is_back_solved全部是1！！！" << std::endl;
-        return;
-    }
-
-    for (int i = 0; i < N; ++i) {
-        u_[subsystems_name][i] = result.segment(i*nu_send, nu).cast<double>();
-        x_[subsystems_name][i] = result.segment(start_idx_x+i*nx_send, nx).cast<double>();
-    }
-    x_[subsystems_name][N] = result.segment(start_idx_x+N*nx_send, nx).cast<double>(); //状态多一维
-
-    return;
-}
-
-// 模板辅助函数：将Eigen矩阵/向量的float数据转换为字节并添加到buffer
-template <typename T>
-void codmpcSolver::appendEigenData(const T& data, std::vector<uint8_t>& buffer) {
-    // 确保数据非空
-    if (data.size() == 0) return;
-    
-    // 获取数据起始地址（float*）
-    const float* float_ptr = data.data();
-    // 计算总字节数（每个float占4字节）
-    size_t total_bytes = data.size() * 4;
-    // 转换为uint8_t指针以按字节访问
-    const uint8_t* byte_ptr = reinterpret_cast<const uint8_t*>(float_ptr);
-    
-    // 将所有字节添加到buffer末尾
-    buffer.insert(buffer.end(), byte_ptr, byte_ptr + total_bytes);
-}
-
-void codmpcSolver::protocolInit() {
-    proto_config_.protocol_type_ = fish_protocol::PROTOCOL_TYPE::SERIAL;
-    proto_config_.serial_baut_ = 115200;
-    proto_config_.serial_address_ = "/dev/ttyUSB0";
-
-    // 初始化
-    protocol_ = GetProtocolByConfig(proto_config_);
-
-    // 设置接收数据回调函数
-    // 方案1：用std::bind（需包含 <functional> 头文件）
-    // protocol_->SetDataRecvCallback(std::bind(&codmpcSolver::dataRecvCallback, this, std::placeholders::_1));
-
-    // 方案2：用lambda（更简洁）
-    protocol_->SetDataRecvCallback([this](const std::string& data) {
-        this->dataRecvCallback(data);
-    });
-
-    return;
-}
-
-bool codmpcSolver::dataSend(std::map<std::string,std::vector<double>> const &x0_map,
-                            std::string const &subsystems_name) {      
-    // setup QP
-    int s_idx = 0;
-    if (subsystems_name == "front") {
-        s_idx = 0;
-        is_front_solved = false;
-    } else if (subsystems_name == "back") {
-        s_idx = 2;
-        is_back_solved = false;
-    } else {
-        return false;
-    }
-
-    int const &N = config_param_.N_;
-    int const &nx = config_param_.n_state;
-    int const &nu = config_param_.n_control;
-    int const nx_send = 40;
-    int const nu_send = 20;
-    int const nc_send = 8;
-
-    // dynamics
-    Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> A = Eigen::MatrixXf::Zero(nx_send, nx_send);
-    A.block(0, 0, nx, nx) = quadruped_model_.Ak_[subsystems_name].cast<float>();
-    Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> B = Eigen::MatrixXf::Zero(nx_send, nu_send);
-    B.block(0, 0, nx, nu) = quadruped_model_.Bk_[subsystems_name].cast<float>();
-
-    // constraints
-    double const epsilon = 5e-3;
-    int n_noslip_constrain = 2*3;
-    std::vector<double> const contact_cmd = x0_map.at("contact_cmd");
-    Eigen::MatrixXd J_matrix = Eigen::MatrixXd::Zero(n_noslip_constrain, 12);
-    J_matrix.block(0, 0, 3, 12) = contact_cmd[s_idx]*quadruped_model_.J_linear_sub_[s_idx];
-    J_matrix.block(3, 0, 3, 12) = contact_cmd[s_idx+1]*quadruped_model_.J_linear_sub_[s_idx+1];
-    Eigen::MatrixXd J_select = Eigen::MatrixXd::Zero(n_noslip_constrain, nx);
-    J_select.block(0, 12, n_noslip_constrain, 12) = J_matrix;
-
-    Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> C = Eigen::MatrixXf::Zero(nc_send, nx_send);
-    C.block(0, 0, n_noslip_constrain, nx) = J_select.cast<float>();
-
-    // x0
-    Eigen::VectorXf x0 = x0_[subsystems_name].cast<float>();
-
-    // x_ref
-    Eigen::VectorXf x_ref = Eigen::VectorXf::Zero(nx_send*(N+1));
-    for (int i=0; i<=N; ++i) {
-        x_ref.segment(i*nx_send, nx) = x_ref_[subsystems_name][i].cast<float>();
-    }
-
-    // u_ref
-    Eigen::VectorXf u_ref = Eigen::VectorXf::Zero(nu_send*N);
-    for (int i=0; i<N; ++i) {
-        x_ref.segment(i*nu_send, nu) = u_ref_[subsystems_name][i].cast<float>();
-    }    
-
-    // B的伪逆
-    Eigen::MatrixXf B_pinv = B.completeOrthogonalDecomposition().pseudoInverse().cast<float>();
-
-    // 构建发送缓冲区
-    // 定义帧头帧尾
-    std::array<uint8_t, 2> const FRAME_HEADER = {0xAA, 0xBB};
-    std::array<uint8_t, 2> const FRAME_FOOTER = {0xCC, 0xDD};
-
-    std::vector<uint8_t> send_buffer;
-    // 插入帧头（在数据最前面）
-    send_buffer.insert(send_buffer.begin(), FRAME_HEADER.begin(), FRAME_HEADER.end());
-    // 插入数据
-    appendEigenData(A, send_buffer);
-    appendEigenData(B, send_buffer);
-    appendEigenData(C, send_buffer);
-    appendEigenData(x0, send_buffer);
-    appendEigenData(x_ref, send_buffer);
-    appendEigenData(u_ref, send_buffer);
-    appendEigenData(B_pinv, send_buffer);
-    // 插入帧尾（在数据最后面）
-    send_buffer.insert(send_buffer.end(), FRAME_FOOTER.begin(), FRAME_FOOTER.end());
-
-    // 发送数据
-    protocol_->ProtocolSendRawData(ByteArrayToString(send_buffer));
-
     return true;
 }
 
-#endif
+MpcResult codmpcSolver::getResult(const ContactVector &contact, bool success) const
+{
+    MpcResult result;
+    result.success = success;
+    result.contact = contact;
+    if (data_.empty() || data_.at("wb").q.empty())
+    {
+        return result;
+    }
 
-#ifdef USE_HPIPM
+    result.joint_position = Eigen::Map<const JointVector>(data_.at("wb").q[1].data());
+    result.joint_velocity = Eigen::Map<const JointVector>(data_.at("wb").dq[1].data());
+    result.torque = Eigen::Map<const JointVector>(data_.at("wb").tau[0].data());
 
-bool codmpcSolver::hpipmSolve(std::map<std::string,std::vector<double>> const &x0_map,
-                              std::string const &subsystems_name) {
+    result.snapshot.position = Eigen::Map<const Eigen::Vector3d>(data_.at("front").p[0].data());
+    result.snapshot.rpy = Eigen::Map<const Eigen::Vector3d>(data_.at("front").rpy[0].data());
+    result.snapshot.linear_velocity = Eigen::Map<const Eigen::Vector3d>(data_.at("front").dp[0].data());
+    result.snapshot.rpy_rate = Eigen::Map<const Eigen::Vector3d>(data_.at("front").omega[0].data());
+    result.snapshot.foot_position = Eigen::Map<const FootVector>(data_.at("wb").foot[0].data());
+    result.snapshot.joint_position = Eigen::Map<const JointVector>(data_.at("wb").q[0].data());
+    result.snapshot.joint_velocity = Eigen::Map<const JointVector>(data_.at("wb").dq[0].data());
+    result.snapshot.torque = result.torque;
+    result.snapshot.ground_reaction_force = Eigen::Map<const FootVector>(data_.at("wb").grf[0].data());
+    return result;
+}
+
+bool codmpcSolver::hpipmSolve(const RobotState &state,
+                              const std::string &subsystems_name,
+                              std::size_t solver_index,
+                              std::vector<Eigen::VectorXd> &x_candidate,
+                              std::vector<Eigen::VectorXd> &u_candidate) {
     // setup QP
     int s_idx = 0;
     if (subsystems_name == "front") {
@@ -784,17 +665,17 @@ bool codmpcSolver::hpipmSolve(std::map<std::string,std::vector<double>> const &x
     int const &nx = config_param_.n_state;
     int const &nu = config_param_.n_control;
     int const &n_contact_wb = config_param_.n_contact_wb;
-    Eigen::VectorXd const &x0 = x0_[subsystems_name];
-    std::vector<Eigen::VectorXd> const &x_ref = x_ref_[subsystems_name];
-    std::vector<Eigen::VectorXd> const &consensus_ref = consensus_ref_[subsystems_name];
-    std::vector<Eigen::VectorXd> const &u_ref = u_ref_[subsystems_name];
+    const Eigen::VectorXd &x0 = x0_.at(subsystems_name);
+    const std::vector<Eigen::VectorXd> &x_ref = x_ref_.at(subsystems_name);
+    const std::vector<Eigen::VectorXd> &consensus_ref = consensus_ref_.at(subsystems_name);
+    const std::vector<Eigen::VectorXd> &u_ref = u_ref_.at(subsystems_name);
 
-    std::vector<hpipm::OcpQp> qp(N+1);
+    auto &qp = qp_[solver_index];
 
     // dynamics
-    Eigen::MatrixXd &A = quadruped_model_.Ak_[subsystems_name];
-    Eigen::MatrixXd &B = quadruped_model_.Bk_[subsystems_name];
-    const Eigen::VectorXd b = Eigen::VectorXd::Zero(nx);
+    const Eigen::MatrixXd &A = quadruped_model_.Ak_.at(subsystems_name);
+    const Eigen::MatrixXd &B = quadruped_model_.Bk_.at(subsystems_name);
+    const Eigen::VectorXd &b = quadruped_model_.bk_.at(subsystems_name);
     for (int i=0; i<N; ++i) { //0～N-1
         qp[i].A = A;
         qp[i].B = B;
@@ -802,10 +683,10 @@ bool codmpcSolver::hpipmSolve(std::map<std::string,std::vector<double>> const &x
     }
 
     // cost
-    Eigen::MatrixXd Q = Q_;
-    Eigen::MatrixXd Q_consensus = Q_consensus_;
-    Eigen::MatrixXd Q_total = Q_ + Q_consensus_;
-    Eigen::MatrixXd R = R_;
+    Eigen::MatrixXd Q = Q_[solver_index];
+    Eigen::MatrixXd Q_consensus = Q_consensus_[solver_index];
+    Eigen::MatrixXd Q_total = Q + Q_consensus;
+    Eigen::MatrixXd R = R_[solver_index];
     Eigen::MatrixXd S = Eigen::MatrixXd::Zero(nu, nx);
 
     // const Eigen::VectorXd q = - Q * x_ref;
@@ -820,24 +701,40 @@ bool codmpcSolver::hpipmSolve(std::map<std::string,std::vector<double>> const &x
         qp[i].S = S;
         qp[i].q = q;
         qp[i].r = r;
-        Q_total *= gamma_;
-        Q *= gamma_;
-        Q_consensus *= gamma_;
+        Q_total *= gamma_[solver_index];
+        Q *= gamma_[solver_index];
+        Q_consensus *= gamma_[solver_index];
         // R *= gamma_;
     }
     q = - Q * x_ref[N] - Q_consensus * consensus_ref[N];
     qp[N].Q = Q_total;
     qp[N].q = q;
 
+    // The torque bounds are frozen with the QP and applied at every control stage.
+    const auto &joint_indices = config_param_.subsystems_map_joint.at(subsystems_name);
+    const int n_joints = static_cast<int>(joint_indices.size());
+    std::vector<int> torque_indices(n_joints);
+    Eigen::VectorXd torque_min(n_joints);
+    Eigen::VectorXd torque_max(n_joints);
+    for (int i{0}; i < n_joints; ++i)
+    {
+        torque_indices[i] = i;
+        const double limit = config_param_.torque_limit.at(joint_indices[i]);
+        torque_min[i] = -limit;
+        torque_max[i] = limit;
+    }
+    for (int i{0}; i < N; ++i)
+    {
+        qp[i].idxbu = torque_indices;
+        qp[i].lbu = torque_min;
+        qp[i].ubu = torque_max;
+    }
+
     // constraints
-    constrains_ = 0;
-
     /////////////////// constrain 1: foot noslip
-    double const epsilon = 5e-3;
+    double const epsilon = config_param_.no_slip_velocity;
     int n_noslip_constrain = 2*3;
-    constrains_ += n_noslip_constrain;
-
-    std::vector<double> const contact_cmd = x0_map.at("contact_cmd");
+    const auto &contact_cmd = state.commanded_contact;
     Eigen::MatrixXd J_matrix = Eigen::MatrixXd::Zero(n_noslip_constrain, 12);
     J_matrix.block(0, 0, 3, 12) = contact_cmd[s_idx]*quadruped_model_.J_linear_sub_[s_idx];
     J_matrix.block(3, 0, 3, 12) = contact_cmd[s_idx+1]*quadruped_model_.J_linear_sub_[s_idx+1];
@@ -849,12 +746,11 @@ bool codmpcSolver::hpipmSolve(std::map<std::string,std::vector<double>> const &x
     Eigen::VectorXd vec_foot_vel_min = -vec_foot_vel_max;
 
     //////////////////// constrain 2: friction cone
-    double const mu = 0.5;
-    double const fz_max = 500;
-    double const fz_min = 0;
+    double const mu = config_param_.friction_coefficient;
+    double const fz_max = config_param_.normal_force_max;
+    double const fz_min = config_param_.normal_force_min;
     
     int n_friction_cone_constrain = 4*5;
-    constrains_ += n_friction_cone_constrain;
     Eigen::MatrixXd friction_matrix_block(5, 3);
     friction_matrix_block << 1,  0, mu,
                             -1,  0, mu,
@@ -878,11 +774,11 @@ bool codmpcSolver::hpipmSolve(std::map<std::string,std::vector<double>> const &x
                         fz_max, fz_max, fz_max, fz_max, fz_max,
                         fz_max, fz_max, fz_max, fz_max, fz_max;
 
-#if 1
-    Eigen::MatrixXd C = Eigen::MatrixXd::Zero(constrains_, nx);
-    Eigen::MatrixXd D = Eigen::MatrixXd::Zero(constrains_, nu);
-    Eigen::VectorXd lg = Eigen::VectorXd::Zero(constrains_);
-    Eigen::VectorXd ug = Eigen::VectorXd::Zero(constrains_);
+    const int num_constraints = n_noslip_constrain + n_friction_cone_constrain;
+    Eigen::MatrixXd C = Eigen::MatrixXd::Zero(num_constraints, nx);
+    Eigen::MatrixXd D = Eigen::MatrixXd::Zero(num_constraints, nu);
+    Eigen::VectorXd lg = Eigen::VectorXd::Zero(num_constraints);
+    Eigen::VectorXd ug = Eigen::VectorXd::Zero(num_constraints);
 
     C.topRows(n_noslip_constrain) = J_select;          // 前 n_c 行对应 Cx 的约束
     C.bottomRows(n_friction_cone_constrain).setZero(); // 后 n_d 行不涉及 x（对应 Du 的约束）
@@ -910,57 +806,17 @@ bool codmpcSolver::hpipmSolve(std::map<std::string,std::vector<double>> const &x
     qp[N].D = Eigen::MatrixXd::Zero(n_noslip_constrain, nu);  
     qp[N].lg = vec_foot_vel_min;
     qp[N].ug = vec_foot_vel_max;
-#else //只加摩擦锥约束
-
-    for (int i = 0; i < N; ++i) { // 注意：状态1～N，控制输入0~N-1
-        // 设置合并后的约束矩阵
-        qp[i].C = Eigen::MatrixXd::Zero(n_friction_cone_constrain, nx);
-        qp[i].D = friction_matrix;  // C_total x + D_total u 的输入部分矩阵
-
-        // 设置合并后的上下界
-        qp[i].lg = vec_friction_min;      // 总下界：lg <= C_total x + D_total u
-        qp[i].ug = vec_friction_max;      // 总上界：C_total x + D_total u <= ug
-    }
-
-#endif
-
-    hpipm::OcpQpIpmSolverSettings solver_settings;
-    solver_settings.mode = hpipm::HpipmMode::SpeedAbs;
-    solver_settings.iter_max = 100;
-    solver_settings.alpha_min = 1e-8;
-    solver_settings.mu0 = 1e2;
-    solver_settings.tol_stat = 1e-04;
-    solver_settings.tol_eq = 1e-04;
-    solver_settings.tol_ineq = 1e-04;
-    solver_settings.tol_comp = 1e-04;
-    solver_settings.reg_prim = 1e-12;
-    solver_settings.warm_start = 0;
-    solver_settings.pred_corr = 1;
-    solver_settings.ric_alg = 1;
-    solver_settings.split_step = 1;
-
-    std::vector<hpipm::OcpQpSolution> solution(N+1);
-    hpipm::OcpQpIpmSolver solver(qp, solver_settings);
-
-    for (int i=0; i<N; ++i) { //热启动部分，TODO
-        solution[i].x = x_[subsystems_name][i];
-        solution[i].u = u_[subsystems_name][i];
-    }
-    solution[N].x = x_[subsystems_name][N];
-
-    tm_.start("hpipm");
-    auto status = solver.solve(x0, qp, solution); //求解MPC问题
-    tm_.stop("hpipm");
-
-    tm_.print("hpipm");
+    auto &solution = solution_[solver_index];
+    const auto status = hpipm_solver_[solver_index].solve(x0, qp, solution);
 
     if (status == hpipm::HpipmStatus::Success) {
-        // 保存控制和状态序列
+        x_candidate.resize(N+1);
+        u_candidate.resize(N);
         for (int i = 0; i < N; ++i) {
-            u_[subsystems_name][i] = solution[i].u;
-            x_[subsystems_name][i] = solution[i].x;
+            u_candidate[i] = solution[i].u;
+            x_candidate[i] = solution[i].x;
         }
-        x_[subsystems_name][N] = solution[N].x; //状态多一维
+        x_candidate[N] = solution[N].x;
 
         return true;
     } else {
@@ -969,314 +825,3 @@ bool codmpcSolver::hpipmSolve(std::map<std::string,std::vector<double>> const &x
 
     return false;
 }
-#endif
-
-#ifdef USE_QPOASES
-
-// 构建总权重矩阵 (Q_total和R_total)，预先计算，只算一次
-void codmpcSolver::buildTotalWeightMatrices() {
-
-    int const &N = config_param_.N_;
-    int const &n = config_param_.n_state;
-    int const &m = config_param_.n_control;
-
-    // Q_total = diag(Q, Q, ..., Q, P)（前N-1个Q，最后1个P）
-    Eigen::VectorXd q_total_diag(n*N);
-    for (int k = 0; k < N-1; ++k) {
-        q_total_diag.segment(k*n, n) = Q_.diagonal();
-    }
-    q_total_diag.segment((N-1)*n, n) = Q_.diagonal();
-    Q_total_.diagonal() = q_total_diag;
-    
-    // R_total = diag(R, R, ..., R)（共N个R）
-    Eigen::VectorXd r_total_diag(m*N);
-    for (int k = 0; k < N; ++k) {
-        r_total_diag.segment(k*m, m) = R_.diagonal();
-    }
-    R_total_.diagonal() = r_total_diag;
-
-    R_total_dense_ = R_total_.toDenseMatrix();
-
-    return;
-}
-
-// 构造F矩阵: [I; A; A^2; ...; A^N]
-void codmpcSolver::buildFMatrix(Eigen::MatrixXd &F, Eigen::MatrixXd const &A) {
-
-    int const &N = config_param_.N_;
-    int const &n = config_param_.n_state;
-
-    F = Eigen::MatrixXd::Zero(n*N, n);
-
-    Eigen::MatrixXd A_pow = A;  // 从A^1开始（对应x1 = A^1 x0 + ...）
-    
-    for (int k = 0; k < N; ++k) {  // k=0对应x1, ..., k=N-1对应xN
-        F.block(k*n, 0, n, n) = A_pow;
-        A_pow = A * A_pow;  // 计算A^(k+2)
-    }
-    
-    return;
-}
-    
-// 构造Phi矩阵
-void codmpcSolver::buildPhiMatrix(Eigen::MatrixXd &Phi, Eigen::MatrixXd const &A, Eigen::MatrixXd const &B) {
-
-    int const &N = config_param_.N_;
-    int const &n = config_param_.n_state;
-    int const &m = config_param_.n_control;
-
-    Phi = Eigen::MatrixXd::Zero(n*N, m*N);
-    
-    for (int k = 0; k < N; ++k) {  // 行块：对应< N; ++k) {  // 行块：对应x_{k+1}（k=0→x1, ..., k=N-1→xN）
-        Eigen::MatrixXd A_pow = Eigen::MatrixXd::Identity(n, n);  // 初始为A^0
-        // 列块：i从k递减到0，确保A_pow = A^(k-i)
-        for (int i = k; i >= 0; --i) {  
-            int row_start = k * n;       // 当前行块起始索引
-            int col_start = i * m;       // 当前列块起始索引（对应u_i）
-            Phi.block(row_start, col_start, n, m) = A_pow * B;
-            A_pow = A * A_pow;  // A_pow从A^0 → A^1 → ... → A^k
-        }
-    }
-    
-    return;
-}
-
-void codmpcSolver::qpOASESinit() {
-
-    //构造大权重矩阵
-    buildTotalWeightMatrices();
-
-    return;
-}
-
-// 计算MPC问题转化为QP问题时的H矩阵和g向量
-// 使用Eigen::DiagonalMatrix存储Q和R，利用Eigen内部优化
-void codmpcSolver::computeQPmatrices(std::string const &subsystems_name,
-    Eigen::VectorXd const &x0, std::map<std::string,std::vector<double>> const &x0_map,
-    std::vector<Eigen::VectorXd> const &x_ref,
-    std::vector<Eigen::VectorXd> const &u_ref,
-    Eigen::MatrixXd& H, Eigen::VectorXd& g, 
-    Eigen::MatrixXd& Ac, Eigen::VectorXd& lbAc, Eigen::VectorXd& ubAc) {
-
-    // 参数设置
-    int s_idx = 0;
-    if (subsystems_name == "front") {
-        s_idx = 0;
-    } else if (subsystems_name == "back") {
-        s_idx = 2;
-    } else {
-        return;
-    }
-    int const &N = config_param_.N_;
-    int const &n = config_param_.n_state;
-    int const &m = config_param_.n_control;
-    int const &n_contact_wb = config_param_.n_contact_wb;
-    int const total_n = n * N;
-    int const total_m = m * N;
-
-    Eigen::MatrixXd const &A = quadruped_model_.Ak_[subsystems_name];
-    Eigen::MatrixXd const &B = quadruped_model_.Bk_[subsystems_name];
-
-    // 构建矩阵
-    Eigen::MatrixXd F;
-    Eigen::MatrixXd Phi;    
-    buildFMatrix(F, A);
-    buildPhiMatrix(Phi, A, B);
-        
-    // 构建参考向量
-    Eigen::VectorXd X_ref(total_n);
-    Eigen::VectorXd U_ref(total_m); 
-    for (int k = 0; k < N; ++k) {
-        X_ref.segment(k*n, n) = x_ref[k];
-    }
-    for (int k = 0; k < N; ++k) {
-        U_ref.segment(k*m, m) = u_ref[k];
-    }
-        
-    // 计算Hessian矩阵和梯度向量
-    Eigen::MatrixXd Fx0 = F * x0;
-    H = 2.0 * (Phi.transpose() * Q_total_ * Phi + R_total_dense_); //R_total.toDenseMatrix()也放在初始化中节省时间
-    g = 2.0 * (Phi.transpose() * (Q_total_ * (Fx0 - X_ref)) - R_total_ * U_ref);
-  
-    // 构造约束
-    constrains_ = 0;
-
-    // constrain 1: friction cone
-    double const mu = 0.5;
-    // double const fz_max = 500;
-    double const fz_min = 0;
-    std::vector<double> const contact_cmd = x0_map.at("contact_cmd");
-    int n_friction_cone_constrain = 4*5;
-    constrains_ += n_friction_cone_constrain;
-    Eigen::MatrixXd friction_matrix_block(5, 3);
-    friction_matrix_block << 1,  0, mu,
-                            -1,  0, mu,
-                             0,  1, mu,
-                             0, -1, mu,
-                             0,  0, 1;
-
-    Eigen::MatrixXd friction_matrix = Eigen::MatrixXd::Zero(n_friction_cone_constrain, m);
-    for (int i=0; i<n_contact_wb; ++i) {
-        friction_matrix.block(0+5*i, 6+3*i, 5, 3) = friction_matrix_block;
-    }
-
-    std::vector<double> fz_max(4, 0);
-    double const fmax = 500;
-    fz_max[0] = fmax;
-    fz_max[1] = fmax;
-    fz_max[2] = fmax;
-    fz_max[3] = fmax;
-
-    // if (s_idx == 0) {
-    //     fz_max[0] = contact_cmd[0]*fmax;
-    //     fz_max[1] = contact_cmd[1]*fmax;
-    //     fz_max[2] = contact_cmd[2]*fmax;
-    //     fz_max[3] = contact_cmd[3]*fmax;
-    // } else {
-    //     fz_max[0] = contact_cmd[2]*fmax;
-    //     fz_max[1] = contact_cmd[3]*fmax;
-    //     fz_max[2] = contact_cmd[0]*fmax;
-    //     fz_max[3] = contact_cmd[1]*fmax;
-    //     // fz_max[0] = contact_cmd[0]*fmax;
-    //     // fz_max[1] = contact_cmd[1]*fmax;
-    //     // fz_max[2] = contact_cmd[2]*fmax;
-    //     // fz_max[3] = contact_cmd[3]*fmax;
-    // }
-
-    Eigen::VectorXd vec_friction_min(n_friction_cone_constrain);
-    Eigen::VectorXd vec_friction_max(n_friction_cone_constrain);
-    vec_friction_min << 0, 0, 0, 0, fz_min,
-                        0, 0, 0, 0, fz_min,
-                        0, 0, 0, 0, fz_min,
-                        0, 0, 0, 0, fz_min;
-    vec_friction_max << fz_max[0],  fz_max[0],  fz_max[0],  fz_max[0],  fz_max[0],
-                        fz_max[1],  fz_max[1],  fz_max[1],  fz_max[1],  fz_max[1],
-                        fz_max[2],  fz_max[2],  fz_max[2],  fz_max[2],  fz_max[2],
-                        fz_max[3],  fz_max[3],  fz_max[3],  fz_max[3],  fz_max[3];
-
-    Eigen::MatrixXd Ac_friction_cone = Eigen::MatrixXd::Zero(n_friction_cone_constrain*N, m*N);
-    Eigen::VectorXd lbAc_friction_cone = Eigen::VectorXd::Zero(n_friction_cone_constrain*N);
-    Eigen::VectorXd ubAc_friction_cone = Eigen::VectorXd::Zero(n_friction_cone_constrain*N);
-    for (int k = 0; k < N; ++k) { 
-        Ac_friction_cone.block(k*n_friction_cone_constrain, k*m, n_friction_cone_constrain, m) = friction_matrix;
-        lbAc_friction_cone.segment(k*n_friction_cone_constrain, n_friction_cone_constrain) = vec_friction_min;
-        ubAc_friction_cone.segment(k*n_friction_cone_constrain, n_friction_cone_constrain) = vec_friction_max;
-    }
-
-    // constrain 2: foot noslip
-    double const epsilon = 5e-3;
-    // double const epsilon_z = 5e-3;
-
-    int n_noslip_constrain = 2*3;
-    constrains_ += n_noslip_constrain;
-
-    Eigen::MatrixXd J_matrix = Eigen::MatrixXd::Zero(6, 12);
-    J_matrix.block(0, 0, 3, 12) = contact_cmd[s_idx]*quadruped_model_.J_linear_sub_[s_idx];
-    J_matrix.block(3, 0, 3, 12) = contact_cmd[s_idx+1]*quadruped_model_.J_linear_sub_[s_idx+1];
-    Eigen::MatrixXd J_select = Eigen::MatrixXd::Zero(n_noslip_constrain*N, total_n);
-    for (int k = 0; k < N; ++k) {
-        J_select.block(n_noslip_constrain*k, n*k+12, n_noslip_constrain, 12) = J_matrix;
-    }
-
-    Eigen::VectorXd vec_foot_vel_max = epsilon*Eigen::VectorXd::Ones(n_noslip_constrain*N);
-    Eigen::VectorXd vec_foot_vel_min = -vec_foot_vel_max;
-    // for(int i=0; i<N; ++i) {
-    //     vec_foot_vel_max(i*6+2) = epsilon_z;
-    //     vec_foot_vel_max(i*6+5) = epsilon_z;
-    // }
-
-    double const inf = std::numeric_limits<double>::infinity();
-    Eigen::MatrixXd Ac_noslip = J_select*Phi;
-    Eigen::VectorXd vec_foot_vel = J_select*Fx0;
-    Eigen::VectorXd lbAc_noslip = vec_foot_vel_min - vec_foot_vel;
-    Eigen::VectorXd ubAc_noslip = vec_foot_vel_max - vec_foot_vel;
-
-    // 依次填充子矩阵到对应位置
-    Ac = Eigen::MatrixXd::Zero(constrains_*N, m*N);
-    lbAc = Eigen::VectorXd::Zero(constrains_*N);
-    ubAc = Eigen::VectorXd::Zero(constrains_*N);
-
-    // 方法1构造约束矩阵，更直观 ？？？两种约束方法效果居然不一致？？？
-    // for (int k = 0; k < N; ++k) {
-    //     Ac.block(k*constrains_, k*m, n_friction_cone_constrain, m) = Ac_friction_cone.block(k*n_friction_cone_constrain, k*m, n_friction_cone_constrain, m);
-    //     Ac.block(k*constrains_+n_friction_cone_constrain, k*m, n_noslip_constrain, m) = Ac_noslip.block(k*n_noslip_constrain, k*m, n_noslip_constrain, m);
-
-    //     lbAc.segment(k*constrains_, n_friction_cone_constrain) = lbAc_friction_cone.segment(k*n_friction_cone_constrain, n_friction_cone_constrain);  // 从索引0开始，填充a的2个元素
-    //     lbAc.segment(k*constrains_+n_friction_cone_constrain, n_noslip_constrain) = lbAc_noslip.segment(k*n_noslip_constrain, n_noslip_constrain);  // 从索引0开始，填充a的2个元素
-
-    //     ubAc.segment(k*constrains_, n_friction_cone_constrain) = ubAc_friction_cone.segment(k*n_friction_cone_constrain, n_friction_cone_constrain);  // 从索引0开始，填充a的2个元素
-    //     ubAc.segment(k*constrains_+n_friction_cone_constrain, n_noslip_constrain) = ubAc_noslip.segment(k*n_noslip_constrain, n_noslip_constrain);  // 从索引0开始，填充a的2个元素
-    // }
-
-    // 方法2构造约束矩阵，更直接
-    Ac.block(0, 0, n_friction_cone_constrain*N, m*N) = Ac_friction_cone;
-    Ac.block(n_friction_cone_constrain*N, 0, n_noslip_constrain*N, m*N) = Ac_noslip;
-    lbAc.segment(0, n_friction_cone_constrain*N) = lbAc_friction_cone;  // 从索引0开始，填充a的2个元素
-    lbAc.segment(n_friction_cone_constrain*N, n_noslip_constrain*N) = lbAc_noslip;  // 从索引2开始，填充b的3个元素
-    ubAc.segment(0, n_friction_cone_constrain*N) = ubAc_friction_cone;  // 从索引0开始，填充a的2个元素
-    ubAc.segment(n_friction_cone_constrain*N, n_noslip_constrain*N) = ubAc_noslip;  // 从索引2开始，填充b的3个元素
-
-    return;
-}
-
-bool codmpcSolver::qpOASESsolve(Eigen::VectorXd const &x0, std::map<std::string,std::vector<double>> const &x0_map,
-                                std::vector<Eigen::VectorXd> const &x_ref,
-                                std::vector<Eigen::VectorXd> const &u_ref,
-                                std::string const &subsystems_name) {
-  
-    if(!is_solver_initialized) {
-        qpOASESinit();
-        is_solver_initialized = true;
-        std::cout << "qpOASES initialized!!!" << std::endl;
-    }
-  
-    // 参数设置
-    int const &N = config_param_.N_;
-    // int const &n = config_param_.n_state;
-    int const &m = config_param_.n_control;
-    int const c = 6;
-
-    // 计算H矩阵和g向量
-    Eigen::MatrixXd H;
-    Eigen::VectorXd g;
-    Eigen::MatrixXd Ac;
-    Eigen::VectorXd lbAc;
-    Eigen::VectorXd ubAc;
-    computeQPmatrices(subsystems_name, x0, x0_map, x_ref, u_ref, H, g, Ac, lbAc, ubAc);
-    
-    // 创建qpOASES问题
-    qpOASES::SQProblem qp(N*m, N*constrains_);
-    // qpOASES::SQProblem qp(N*m, 0);
-    
-    // 设置求解器选项
-    qpOASES::Options options;
-    options.setToMPC();
-    options.printLevel = qpOASES::PL_NONE;
-    // options.printLevel = qpOASES::PL_DEBUG_ITER;
-    qp.setOptions(options);
-    
-    // 初始化问题
-    int nWSR = 1000;
-    Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> H_R = H; // qpOASES接收的矩阵为行向量！！！
-    Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> Ac_R = Ac;
-    qpOASES::returnValue status = qp.init(H_R.data(), g.data(), Ac_R.data(), nullptr, nullptr, lbAc.data(), ubAc.data(), nWSR);
-    
-    if (status == qpOASES::SUCCESSFUL_RETURN) {
-        // 获取最优解
-        Eigen::VectorXd u_opt(N*m);
-        qp.getPrimalSolution(u_opt.data());
-        
-        // 保存控制序列
-        for (int i = 0; i < N; ++i) {
-            u_[subsystems_name][i] = u_opt.segment(i*m, m);
-        }
-        
-        return true;
-    } else {
-        std::cerr << "QP solving failed! Error code: " << status << std::endl;
-    }
-    
-    return false;
-}
-
-#endif

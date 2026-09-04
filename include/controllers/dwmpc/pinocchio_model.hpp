@@ -13,13 +13,13 @@
 #include "pinocchio/algorithm/crba.hpp"
 #include "pinocchio/algorithm/frames.hpp"
 #include "pinocchio/algorithm/compute-all-terms.hpp"
+#include "pinocchio/math/rpy.hpp"
 #include "pinocchio/parsers/urdf.hpp"
 #include "urdfdom/urdf_parser/urdf_parser.h"
+#include "controllers/dwmpc/types.hpp"
 
 class parameter
 {   public:
-    int max_iteration{100}; // maximum number of iteration for the distributed solver
-    bool receding_horizon{true}; // flag if using a reciding horizon
     std::vector<std::string> subsystems_name; //vecotr of the names of the subsystems
     std::map<std::string,std::vector<int>> subsystems_map_joint;//nap the name of the subsistem to the joint number in the whole body 
     std::map<std::string,std::vector<int>> subsystems_map_contact;//nap the name of the subsistem to the contact number in the whole body 
@@ -32,6 +32,11 @@ class parameter
     int n_state{};
     int n_control{};
     double dt{};
+    std::vector<double> torque_limit;
+    double friction_coefficient{};
+    double normal_force_min{};
+    double normal_force_max{};
+    double no_slip_velocity{};
 };
 
 class quadrupedModel {
@@ -40,15 +45,16 @@ class quadrupedModel {
     quadrupedModel();
     ~quadrupedModel();
     void modelInit(parameter const &config_param);
-    void modelUpdate(std::map<std::string,std::vector<double>> const &x0_map);
+    void modelUpdate(const RobotState &state);
     std::vector<Eigen::VectorXd> updatePrediction(Eigen::VectorXd const &x0,
                                                 std::vector<Eigen::VectorXd> const &u,
                                                 std::string const &subsystems_name);
-    void createSelectMatrix(std::string const &subsystems_name, std::map<std::string, std::vector<double>> const &x0_map,
+    void createSelectMatrix(std::string const &subsystems_name, const RobotState &state,
                             Eigen::MatrixXd &S);
 
     std::map<std::string, Eigen::MatrixXd> Ak_;
     std::map<std::string, Eigen::MatrixXd> Bk_;
+    std::map<std::string, Eigen::VectorXd> bk_;
 
     std::vector<Eigen::MatrixXd> J_linear_wb_; //足端线速度雅可比矩阵
     std::vector<Eigen::MatrixXd> J_linear_sub_; //子系统足端线速度雅可比矩阵
@@ -58,8 +64,8 @@ class quadrupedModel {
 
     private:
     void updateSubsystem(std::string const &subsystems_name, Eigen::MatrixXd const &M_wb, 
-                         Eigen::VectorXd const &nle_wb, Eigen::MatrixXd const &inv_jac_R,
-                         std::map<std::string,std::vector<double>> const &x0_map);
+                         Eigen::VectorXd const &nle_wb,
+                         const RobotState &state);
     pinocchio::Model pin_model_;
     pinocchio::Data pin_data_;
     parameter config_param_;
@@ -69,14 +75,7 @@ class quadrupedModel {
 };
 
 double normalizeAngle(double angle);
-
-#ifdef DEBUG_MODE
-
-void debug_print(const std::vector<double>& vec);
-void debug_print(const std::vector<std::vector<double>>& mat);
-void debug_print(const Eigen::VectorXd& vec);
-void debug_print(const Eigen::MatrixXd& mat);
-
-#endif
+Eigen::Vector3d worldOmegaToYprRate(const Eigen::Vector3d &rpy,
+                                    const Eigen::Vector3d &omega_world);
 
 #endif

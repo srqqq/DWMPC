@@ -7,30 +7,13 @@
 #include <algorithm>
 #include <chrono>
 #include <map>
-#include <cstring>
-#include <cstdio>
-#include <stdlib.h>
-#include <csignal>
 #include <string>
+#include <stdexcept>
+#include <array>
 #include "controllers/dwmpc/pinocchio_model.hpp"
+#include "controllers/dwmpc/types.hpp"
 
-#include "controllers/dwmpc/codmpc_tools.hpp"
-
-// #ifdef DEBUG_MODE
-// #include "controllers/dwmpc/robot_data_logger.hpp"
-// #endif
-
-#ifdef USE_QPOASES
-#include "qpOASES.hpp"
-#endif
-
-#ifdef USE_HPIPM
 #include "hpipm-cpp/hpipm-cpp.hpp"
-#endif
-
-#ifdef USE_FPGA
-#include "fish_protocol/fish_protocol.h"
-#endif
 
 class pdata
 {   
@@ -40,7 +23,7 @@ class pdata
     std::vector<std::vector<double>> rpy{}; // roll pitch yaw
     std::vector<std::vector<double>> q{}; // joint angle
     std::vector<std::vector<double>> dp{}; // linear velocity prediction
-    std::vector<std::vector<double>> omega{}; //angular velocity 
+    std::vector<std::vector<double>> omega{}; // roll-pitch-yaw rates
     std::vector<std::vector<double>> dq{}; // joint velocity
     std::vector<std::vector<double>> grf{}; // ground reaction forces
     std::vector<std::vector<double>> tau{}; // joint torque
@@ -54,63 +37,19 @@ class codmpcSolver {
         codmpcSolver();
         virtual ~codmpcSolver();
         void init(const parameter &config_param);
-        void solve( bool &do_init,
-                    const std::map<std::string,std::vector<double>> &x0_map,
-                    const std::map<std::string,std::vector<std::vector<double>>> &ref,
-                    const std::map<std::string,std::vector<std::vector<double>>> &param,
-                    const std::map<std::string,std::vector<double>> &weight_vec);
-        void getControl(std::vector<double> &des_q,std::vector<double> &des_dq,std::vector<double> &des_tau);
-        void getData(std::map<std::string,pdata> &data);
-        void prepare(); 
-        Eigen::DiagonalMatrix<double, Eigen::Dynamic> Q_;
-        Eigen::DiagonalMatrix<double, Eigen::Dynamic> Q_consensus_; // ADMM的consensus
-        Eigen::DiagonalMatrix<double, Eigen::Dynamic> R_;
-        double gamma_;
+        bool solve(bool &do_init,
+                   const RobotState &state,
+                   const ReferenceTrajectory &reference,
+                   const MpcWeights &weights);
+        MpcResult getResult(const ContactVector &contact, bool success) const;
+        const std::map<std::string,pdata> &getData() const { return data_; }
 
-#ifdef USE_FPGA
-        bool is_front_solved{false};
-        bool is_back_solved{false};
-        fish_protocol::ProtocolConfig proto_config_;
-        std::shared_ptr<fish_protocol::FishProtocol> protocol_;
-
-        std::string ByteArrayToString(const std::vector<uint8_t>& byteArray);
-        std::vector<uint8_t> StringToByteArray(const std::string& str);
-        void dataRecvCallback(const std::string& data);
-        template <typename T>
-        void appendEigenData(const T& data, std::vector<uint8_t>& buffer);
-        void protocolInit();
-        bool dataSend(std::map<std::string,std::vector<double>> const &x0_map,
-                      std::string const &subsystems_name);
-#endif
-
-#ifdef USE_HPIPM
-        bool hpipmSolve(std::map<std::string,std::vector<double>> const &x0_map,
-                        std::string const &subsystems_name);
-#endif
-
-#ifdef USE_QPOASES
-        bool is_solver_initialized{false};
-        // 权重对角矩阵
-        Eigen::DiagonalMatrix<double, Eigen::Dynamic> Q_total_;
-        Eigen::DiagonalMatrix<double, Eigen::Dynamic> R_total_;
-        Eigen::MatrixXd R_total_dense_;
-        
-        void buildTotalWeightMatrices();
-        void buildFMatrix(Eigen::MatrixXd &F, Eigen::MatrixXd const &A);
-        void buildPhiMatrix(Eigen::MatrixXd &Phi, Eigen::MatrixXd const &A, Eigen::MatrixXd const &B);
-        void qpOASESinit();
-        void computeQPmatrices(std::string const &subsystems_name,
-                               Eigen::VectorXd const &x0, std::map<std::string,std::vector<double>> const &x0_map,
-                               std::vector<Eigen::VectorXd> const &x_ref,
-                               std::vector<Eigen::VectorXd> const &u_ref,
-                               Eigen::MatrixXd& H, Eigen::VectorXd& g, 
-                               Eigen::MatrixXd& Ac, Eigen::VectorXd& lbAc, Eigen::VectorXd& ubAc);
-        bool qpOASESsolve(Eigen::VectorXd const &x0, std::map<std::string,std::vector<double>> const &x0_map,
-                                std::vector<Eigen::VectorXd> const &x_ref,
-                                std::vector<Eigen::VectorXd> const &u_ref,
-                                std::string const &subsystems_name);
-#endif
     private:
+        bool hpipmSolve(const RobotState &state,
+                        const std::string &subsystems_name,
+                        std::size_t solver_index,
+                        std::vector<Eigen::VectorXd> &x_candidate,
+                        std::vector<Eigen::VectorXd> &u_candidate);
         parameter config_param_;
         quadrupedModel quadruped_model_;
         std::map<std::string, pdata> data_;
@@ -120,14 +59,13 @@ class codmpcSolver {
         std::map<std::string, std::vector<Eigen::VectorXd>> x_ref_; // 参考状态序列
         std::map<std::string, std::vector<Eigen::VectorXd>> u_ref_; // 参考输入序列
         std::map<std::string, std::vector<Eigen::VectorXd>> consensus_ref_; // 参考一致项序列
-
-        int constrains_;
-
-        TimerManager tm_;
-
-// #ifdef DEBUG_MODE
-//         RobotDataLogger data_logger_;
-// #endif
+        std::array<Eigen::DiagonalMatrix<double, Eigen::Dynamic>, 2> Q_;
+        std::array<Eigen::DiagonalMatrix<double, Eigen::Dynamic>, 2> Q_consensus_;
+        std::array<Eigen::DiagonalMatrix<double, Eigen::Dynamic>, 2> R_;
+        std::array<double, 2> gamma_{};
+        std::array<std::vector<hpipm::OcpQp>, 2> qp_;
+        std::array<std::vector<hpipm::OcpQpSolution>, 2> solution_;
+        std::array<hpipm::OcpQpIpmSolver, 2> hpipm_solver_;
 };
 
 #endif
