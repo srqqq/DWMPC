@@ -49,12 +49,12 @@ trajectory_is_automatic = trajectory_mode != TRAJECTORY_MODE_MANUAL
 ''' 扰动实验参数（相对轨迹开始时间，方向为参考航向坐标系+y） '''
 disturbance_parameters = {
     "enabled": True,
-    "start_delay": 5.0,       # 轨迹开始后等待时间 [s]
-    "amplitude_ratio": 0.10,  # 峰值力 / 机器人重量
-    "frequency": 1.4,         # [Hz]，当前等于MPC步态频率
+    "start_delay": 1.0,       # 轨迹开始后等待时间 [s]
+    "amplitude_ratio": 0.1,   # 峰值力 / 机器人重量
+    "frequency": 1.0,         # [Hz]，当前等于MPC步态频率
     "phase": 0.0,             # [rad]
     "ramp_cycles": 1.0,       # 起止平滑过渡各占用的周期数
-    "steady_cycles": 8.0,     # 保持完整幅值的周期数
+    "steady_cycles": 1000.0,  # 保持完整幅值的周期数
 }
 
 ''' Mujoco设置 '''
@@ -378,8 +378,6 @@ try:
         state, reward, is_terminated, is_truncated, info = env.step(action=action)
 
         sim_step += 1
-        if is_terminated:
-            break
         env.render()
 except KeyboardInterrupt:
     print("用户中断程序")
